@@ -12,7 +12,7 @@ describe("plugin package contract", () => {
       sdkVersion: string;
     };
     expect(manifest.tier).toBe("js");
-    expect(manifest.sdkVersion).toBe("^0.4");
+    expect(manifest.sdkVersion).toBe("^0.4.3");
     expect(manifest.permissions).toEqual(expect.arrayContaining([
       "storage",
       "plugin.storage",

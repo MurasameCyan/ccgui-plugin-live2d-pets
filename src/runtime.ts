@@ -1,9 +1,11 @@
 import type {
   AfterTurnEvent,
   AssetDirectoryGrant,
+  BeforeTurnEvent,
   Disposer,
   NormalizedRuntimeEvent,
   PluginContext,
+  SessionCreatedEvent,
   SessionHooks,
   TurnHooks,
 } from "./sdk";
@@ -91,6 +93,9 @@ function normalizeConfig(value: unknown): PetConfig {
 function isTerminal(event: AfterTurnEvent): boolean {
   return event.status === "completed" || event.status === "cancelled" || event.status === "failed";
 }
+function sameSession(a: SessionCreatedEvent, b: SessionCreatedEvent): boolean {
+  return a.engine === b.engine && a.sessionId === b.sessionId && a.workspace.path === b.workspace.path;
+}
 function normalizeRelativePath(value: string): string {
   return value.trim().replaceAll("\\", "/").replace(/^\/+/, "");
 }
@@ -104,7 +109,7 @@ export class PetRuntime {
   private display: PetDisplay = { ...DEFAULT_DISPLAY };
   private state: PetState = "idle";
   private agent = "idle";
-  private activeTurnId: string | undefined;
+  private activeTurn: BeforeTurnEvent | undefined;
   private doneTimer: ReturnType<typeof setTimeout> | undefined;
   private version = 0;
   private readyState = false;
@@ -122,13 +127,29 @@ export class PetRuntime {
   constructor(private readonly ctx: PluginContext) {
     this.ready = this.initialize();
     const sessionHooks: SessionHooks = {
-      onCreated: () => this.setState("idle"),
-      onRestored: () => this.setState("idle"),
-      onClosed: () => { this.activeTurnId = undefined; this.setState("idle"); },
+      onCreated: (event) => {
+        const turn = this.activeTurn;
+        if (!turn) { this.setState("idle"); return; }
+        // A new session's native ID arrives after onTurnStarted. Adopt it
+        // without interrupting that turn or another session's active work.
+        if (turn.sessionId === null && turn.engine === event.engine && turn.workspace.path === event.workspace.path) {
+          this.activeTurn = { ...turn, sessionId: event.sessionId };
+        }
+      },
+      onRestored: (event) => {
+        if (this.activeTurn && sameSession(this.activeTurn, event)) return;
+        this.activeTurn = undefined;
+        this.setState("idle");
+      },
+      onClosed: (event) => {
+        if (this.activeTurn && !sameSession(this.activeTurn, event)) return;
+        this.activeTurn = undefined;
+        this.setState("idle");
+      },
     };
     const turnHooks: TurnHooks = {
       onTurnStarted: (event) => {
-        this.activeTurnId = event.turnId;
+        this.activeTurn = event;
         this.agent = event.engine;
         this.setState("thinking");
       },
@@ -167,23 +188,23 @@ export class PetRuntime {
     this.setState("done");
     this.doneTimer = setTimeout(() => {
       this.doneTimer = undefined;
-      this.activeTurnId = undefined;
+      this.activeTurn = undefined;
       this.setState("idle");
     }, DONE_HOLD_MS);
   }
   private onRuntimeEvent(event: NormalizedRuntimeEvent): void {
-    if (this.activeTurnId && event.turnId !== this.activeTurnId) return;
+    if (!this.activeTurn || event.turnId !== this.activeTurn.turnId) return;
     if (event.kind === "permission-requested") this.setState("waiting");
     else if (event.kind === "assistant-completed") this.setDone();
-    else if (event.kind === "turn-cancelled") { this.activeTurnId = undefined; this.setState("idle"); }
-    else if (event.kind === "turn-failed") { this.activeTurnId = undefined; this.setState("error"); }
-    else if (event.kind === "runtime-exited" && this.state !== "done") { this.activeTurnId = undefined; this.setState("idle"); }
+    else if (event.kind === "turn-cancelled") { this.activeTurn = undefined; this.setState("idle"); }
+    else if (event.kind === "turn-failed") { this.activeTurn = undefined; this.setState("error"); }
+    else if (event.kind === "runtime-exited" && this.state !== "done") { this.activeTurn = undefined; this.setState("idle"); }
   }
   private afterTurn(event: AfterTurnEvent): void {
-    if (!isTerminal(event) || (this.activeTurnId && event.turnId !== this.activeTurnId)) return;
+    if (!isTerminal(event) || !this.activeTurn || event.turnId !== this.activeTurn.turnId) return;
     if (event.status === "completed") this.setDone();
-    else if (event.status === "failed") { this.activeTurnId = undefined; this.setState("error"); }
-    else { this.activeTurnId = undefined; this.setState("idle"); }
+    else if (event.status === "failed") { this.activeTurn = undefined; this.setState("error"); }
+    else { this.activeTurn = undefined; this.setState("idle"); }
   }
   private emit(): void {
     const view = this.snapshot();

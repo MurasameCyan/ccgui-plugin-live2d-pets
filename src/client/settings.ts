@@ -84,9 +84,10 @@ function modelEntry(
   const trimmedUrl = modelUrl.trim();
   const trimmedDirectoryPath = directoryPath?.trim() ?? "";
   if (!trimmedName || !isSupportedModelLocation(trimmedUrl)) return null;
-  if (!isRemoteModelUrl(trimmedUrl) && (!directoryGrantId || !trimmedDirectoryPath)) return null;
+  const remote = isRemoteModelUrl(trimmedUrl);
+  if (!remote && (!directoryGrantId || !trimmedDirectoryPath)) return null;
   const entry: CustomModelEntry = { id, name: trimmedName, modelUrl: trimmedUrl };
-  if (directoryGrantId && trimmedDirectoryPath) {
+  if (!remote && directoryGrantId && trimmedDirectoryPath) {
     entry.directoryGrantId = directoryGrantId;
     entry.directoryPath = trimmedDirectoryPath;
   }
@@ -204,6 +205,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
   const writeQueue = useRef(Promise.resolve());
   const modelQueue = useRef(Promise.resolve());
   const modelsRef = useRef(view.customModels);
+  const directoryRequests = useRef({ new: 0, edit: 0 });
 
   const syncView = (next: PetStateView): void => {
     viewRef.current = next;
@@ -211,7 +213,14 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     setView(next);
   };
 
-  useEffect(() => runtime.subscribe((next) => syncView(next)), [runtime]);
+  useEffect(() => {
+    const unsubscribe = runtime.subscribe((next) => syncView(next));
+    return () => {
+      unsubscribe();
+      directoryRequests.current.new += 1;
+      directoryRequests.current.edit += 1;
+    };
+  }, [runtime]);
 
   const write = (path: string, value: unknown): void => {
     writeQueue.current = writeQueue.current.then(async () => {
@@ -236,8 +245,27 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     });
   };
 
+  const changeModelUrl = (target: "new" | "edit", value: string): void => {
+    // A manually edited address is a new source, not an alias for the old grant.
+    directoryRequests.current[target] += 1;
+    if (target === "new") {
+      setNewUrl(value);
+      setNewGrantId(undefined);
+      setNewGrantPath("");
+      setNewDirectoryPath("");
+    } else {
+      setEditUrl(value);
+      setEditGrantId(undefined);
+      setEditGrantPath("");
+      setEditDirectoryPath("");
+    }
+    setNotice(null);
+  };
+
   const pickDirectory = (target: "new" | "edit"): void => {
+    const request = ++directoryRequests.current[target];
     void runtime.grantDirectory().then((grant) => {
+      if (directoryRequests.current[target] !== request) return;
       if (target === "new") {
         setNewGrantId(grant.grantId);
         setNewGrantPath(grant.path);
@@ -248,7 +276,10 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
         setEditUrl(grant.path);
       }
       setNotice("目录已授权；请填写目录内的 .model3.json 相对路径。");
-    }).catch((error) => setNotice(`目录授权失败：${error instanceof Error ? error.message : String(error)}`));
+    }).catch((error) => {
+      if (directoryRequests.current[target] !== request) return;
+      setNotice(`目录授权失败：${error instanceof Error ? error.message : String(error)}`);
+    });
   };
 
   const newCandidate = modelEntry("preview", newName || "preview", newUrl, newGrantId, newDirectoryPath);
@@ -314,11 +345,12 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     if (spatialTap) candidate.spatialTap = spatialTap;
     if (animationMap) candidate.animationMap = animationMap;
     saveModels((current) => [...current, candidate]);
-    setNewName(""); setNewUrl(""); setNewGrantId(undefined); setNewGrantPath(""); setNewDirectoryPath("");
+    setNewName(""); changeModelUrl("new", "");
     setNewSpatial({ ...EMPTY_SPATIAL_DRAFT }); setNewMotion({}); setNewPanel(null);
   };
 
   const beginEdit = (entry: CustomModelEntry): void => {
+    directoryRequests.current.edit += 1;
     setEditId(entry.id);
     setEditName(entry.name);
     setEditUrl(entry.modelUrl);
@@ -331,7 +363,11 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     setEditMotionStatus("idle");
   };
 
-  const cancelEdit = (): void => { setEditId(null); setEditPanel(null); };
+  const cancelEdit = (): void => {
+    directoryRequests.current.edit += 1;
+    setEditId(null);
+    setEditPanel(null);
+  };
 
   const saveEdit = (): void => {
     if (!editId || !editCandidate || !modelIsAllowed(editCandidate)) {
@@ -419,7 +455,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       return createElement("div", { key: entry.id, style: { ...rowStyle, display: "flex", flexDirection: "column", gap: 6 } },
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           createElement("input", { style: inputStyle, value: editName, placeholder: "名称", onChange: (event: Event) => setEditName((event.currentTarget as HTMLInputElement).value) }),
-          createElement("input", { style: { ...inputStyle, flex: 1 }, value: editUrl, placeholder: "https://…/model3.json 或已授权目录", onChange: (event: Event) => setEditUrl((event.currentTarget as HTMLInputElement).value) }),
+          createElement("input", { style: { ...inputStyle, flex: 1 }, value: editUrl, placeholder: "https://…/model3.json 或已授权目录", onChange: (event: Event) => changeModelUrl("edit", (event.currentTarget as HTMLInputElement).value) }),
           createElement("button", { style: buttonStyle, onClick: saveEdit }, "保存"),
           createElement("button", { style: buttonStyle, onClick: cancelEdit }, "取消"),
         ),
@@ -463,7 +499,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       createElement("div", { style: { ...rowStyle, display: "flex", flexDirection: "column", gap: 6 } },
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           createElement("input", { style: inputStyle, value: newName, placeholder: "名称", disabled: !writable, onChange: (event: Event) => setNewName((event.currentTarget as HTMLInputElement).value) }),
-          createElement("input", { style: { ...inputStyle, flex: 1 }, value: newUrl, placeholder: "https://…/model3.json 或授权目录", disabled: !writable, onChange: (event: Event) => setNewUrl((event.currentTarget as HTMLInputElement).value) }),
+          createElement("input", { style: { ...inputStyle, flex: 1 }, value: newUrl, placeholder: "https://…/model3.json 或授权目录", disabled: !writable, onChange: (event: Event) => changeModelUrl("new", (event.currentTarget as HTMLInputElement).value) }),
           createElement("button", { style: buttonStyle, disabled: !writable, onClick: addModel }, "添加"),
         ),
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },

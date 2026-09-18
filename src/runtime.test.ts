@@ -1,76 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PetRuntime } from "./runtime";
-import type { PluginContext, SessionHooks, TurnHooks } from "./sdk";
+import { makeContext, turnEvent } from "./test-context";
+import type { NormalizedRuntimeEvent } from "./sdk";
 
-function makeContext() {
-  const values = new Map<string, unknown>();
-  const documents = new Map<string, { content: string; version: string }>();
-  let version = 0;
-  let sessionHooks: SessionHooks | undefined;
-  let turnHooks: TurnHooks | undefined;
-  const ctx = {
-    pluginId: "ccgui.live2d-pets",
-    version: "1.0.0",
-    react: {
-      createElement() { return null; },
-      Fragment: Symbol.for("react.fragment"),
-      useEffect() {},
-      useState<T>(initial: T | (() => T)) { return [typeof initial === "function" ? (initial as () => T)() : initial, () => {}] as [T, (value: T | ((current: T) => T)) => void]; },
-      useRef<T>(current: T) { return { current }; },
-      useCallback<T>(callback: T) { return callback; },
-      useMemo<T>(factory: () => T) { return factory(); },
-      useSyncExternalStore<T>(_subscribe: unknown, getSnapshot: () => T) { return getSnapshot(); },
-    },
-    hooks: {
-      registerSessionHooks(hooks: SessionHooks) { sessionHooks = hooks; return () => { sessionHooks = undefined; }; },
-      registerTurnHooks(hooks: TurnHooks) { turnHooks = hooks; return () => { turnHooks = undefined; }; },
-      registerRuntimeSwitchHooks() { return () => {}; },
-    },
-    documentStorage: {
-      async getLocation() { return { kind: "data", path: "C:/plugin-data/live2d" }; },
-      async selectLocation() { return { kind: "data", path: "C:/plugin-data/live2d" }; },
-      async readText(path: string) { return documents.get(path) ?? null; },
-      async writeTextAtomic(path: string, content: string) {
-        const next = { content, version: `v${++version}` };
-        documents.set(path, next);
-        return { version: next.version };
-      },
-      async remove(path: string) { documents.delete(path); },
-      async list() { return [...documents.keys()]; },
-    },
-    assets: {
-      bundleUrl(path: string) { return `plugin://bundle/${path}`; },
-      documentUrl(path: string) { return `plugin://document/${path}`; },
-      remoteUrl(url: string) { return url; },
-      async grantDirectory() { return { grantId: "grant", path: "C:/models" }; },
-      async listDirectories() { return []; },
-      async revokeDirectory() {},
-      directoryUrl(grantId: string, path: string) { return `plugin://directory/${grantId}/${path}`; },
-    },
-    shell: { async revealPath() {} },
-    ui: {},
-    theme: {},
-    i18n: {},
-    storage: {
-      async get<T>(key: string) { return (values.get(key) as T | undefined) ?? null; },
-      async set(key: string, value: unknown) { values.set(key, value); },
-      async delete(key: string) { values.delete(key); },
-    },
-    events: { on() { return () => {}; }, emit() {} },
-    host: { appVersion: "1.0.4", sdkVersion: "0.4.3", locale: "zh-CN", isWeb: false },
-  } as unknown as PluginContext;
-  return { ctx, documents, getSessionHooks: () => sessionHooks, getTurnHooks: () => turnHooks };
-}
-
-function turnEvent() {
+function runtimeEvent(kind: "permission-requested" | "turn-cancelled" | "turn-failed" | "runtime-exited"): NormalizedRuntimeEvent {
   return {
-    runId: "run-1",
-    turnId: "turn-1",
-    engine: "codex",
-    sessionId: "session-1",
-    workspace: { id: "workspace-1", path: "C:/work" },
-    occurredAt: new Date(0).toISOString(),
-  };
+    ...turnEvent(), kind, eventId: `event-${kind}`, workspaceId: "workspace-1", workspacePath: "C:/work",
+    tool: null, path: null, exitCode: 0,
+  } as NormalizedRuntimeEvent;
 }
 
 describe("PetRuntime", () => {
@@ -151,5 +88,105 @@ describe("PetRuntime", () => {
     expect(runtime.snapshot().customPersonas.map((persona) => persona.id)).toEqual(["quiet"]);
     expect(runtime.snapshot().customModels.map((model) => model.id)).toEqual(["m1"]);
     runtime.dispose();
+  });
+
+  for (const phase of ["startup", "closed", "cancelled", "failed", "exited", "expired"] as const) {
+    it.each(["runtime", "afterTurn"] as const)(`ignores late %s callbacks when the active turn is absent (${phase})`, async (source) => {
+      vi.useFakeTimers();
+      const harness = makeContext();
+      const runtime = new PetRuntime(harness.ctx);
+      try {
+        await runtime.ready;
+        const hooks = harness.getTurnHooks()!;
+        if (phase !== "startup") hooks.onTurnStarted?.(turnEvent());
+        if (phase === "closed") harness.getSessionHooks()?.onClosed?.(turnEvent());
+        if (phase === "cancelled") hooks.onRuntimeEvent?.(runtimeEvent("turn-cancelled"));
+        if (phase === "failed") hooks.onRuntimeEvent?.(runtimeEvent("turn-failed"));
+        if (phase === "exited") hooks.onRuntimeEvent?.(runtimeEvent("runtime-exited"));
+        if (phase === "expired") {
+          hooks.afterTurn?.({ ...turnEvent(), status: "completed" });
+          vi.advanceTimersByTime(3500);
+        }
+        const expected = phase === "failed" ? "error" : "idle";
+        expect(runtime.snapshot().state).toBe(expected);
+        if (source === "runtime") hooks.onRuntimeEvent?.(runtimeEvent("permission-requested"));
+        else hooks.afterTurn?.({ ...turnEvent(), status: "completed" });
+        expect(runtime.snapshot().state).toBe(expected);
+        expect(vi.getTimerCount()).toBe(0);
+
+        hooks.onTurnStarted?.({ ...turnEvent(), turnId: "next-turn" });
+        expect(runtime.snapshot().state).toBe("thinking");
+      } finally {
+        runtime.dispose();
+      }
+    });
+  }
+
+  it("keeps the first turn active when the host announces its native session ID after turn start", async () => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      harness.getTurnHooks()?.onTurnStarted?.({ ...turnEvent(), sessionId: null });
+      harness.getSessionHooks()?.onCreated?.(turnEvent());
+      expect(runtime.snapshot().state).toBe("thinking");
+      harness.getTurnHooks()?.onRuntimeEvent?.(runtimeEvent("permission-requested"));
+      expect(runtime.snapshot().state).toBe("waiting");
+      harness.getSessionHooks()?.onClosed?.(turnEvent());
+      expect(runtime.snapshot().state).toBe("idle");
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      expect(runtime.snapshot().state).toBe("idle");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("invalidates the previous turn when restoring a different session", async () => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      harness.getSessionHooks()?.onRestored?.({ ...turnEvent(), sessionId: "other-session" });
+      expect(runtime.snapshot().state).toBe("idle");
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      expect(runtime.snapshot().state).toBe("idle");
+      harness.getTurnHooks()?.onTurnStarted?.({ ...turnEvent(), turnId: "next-turn", sessionId: "other-session" });
+      expect(runtime.snapshot().state).toBe("thinking");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("keeps a running turn when that same session is restored", async () => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      harness.getSessionHooks()?.onRestored?.(turnEvent());
+      expect(runtime.snapshot().state).toBe("thinking");
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      expect(runtime.snapshot().state).toBe("done");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it.each([
+    { sessionId: "other-session" },
+    { engine: "claude" },
+    { workspace: { id: "workspace-2", path: "D:/other" } },
+  ])("ignores a different session's close signal (%j)", async (difference) => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      harness.getSessionHooks()?.onClosed?.({ ...turnEvent(), ...difference });
+      expect(runtime.snapshot().state).toBe("thinking");
+    } finally {
+      runtime.dispose();
+    }
   });
 });

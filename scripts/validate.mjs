@@ -19,7 +19,7 @@ const requiredPermissions = [
 
 if (!/^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/.test(manifest.id)) throw new Error(`invalid plugin id: ${manifest.id}`);
 if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error(`invalid plugin version: ${manifest.version}`);
-if (manifest.sdkVersion !== "^0.4") throw new Error(`unsupported sdkVersion: ${manifest.sdkVersion}`);
+if (manifest.sdkVersion !== "^0.4.3") throw new Error(`unsupported sdkVersion: ${manifest.sdkVersion}`);
 for (const permission of requiredPermissions) {
   if (!manifest.permissions.includes(permission)) throw new Error(`manifest missing permission: ${permission}`);
 }

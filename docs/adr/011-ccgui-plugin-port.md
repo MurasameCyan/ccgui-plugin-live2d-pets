@@ -28,6 +28,15 @@ The CC GUI SDK provides the equivalent primitives needed for the user-visible be
 7. Keep model rendering and interaction in the overlay component. The host overlay container remains pointer-transparent outside the interactive canvas.
 8. Register the settings icon as a React component through the SDK; do not mutate host settings DOM with a `MutationObserver`.
 9. Keep the six personas, 13 speech pools, custom base inheritance, five curated models, spatial tap fallback, animation mapping, motion priority, focus suppression, completion hold, and visibility throttling.
+10. Require SDK `^0.4.3`, where overlays, the asset bridge and `onTurnStarted` are first available. An application version check alone does not establish these capabilities.
+
+The overlay subscribes before loading vendor scripts or models so display controls also work during loading and fallback. Initial and replacement models use the same load queue. Each model's Cubism core is explicitly disposed, including models whose load completes after unmount; destroying the PIXI application alone does not destroy its stage children by default.
+
+Use the bundled vendor's `fromSync` to retain the instance while asynchronous setup is pending. On setup failure, destroy a partially initialized instance only when its `internalModel` exists: the vendor's destroy method assumes that field is initialized. Successful instances transfer to the mounted-model lifecycle; late success and failure are released when setup settles, without creating UI after unmount. This does not introduce request cancellation or a load timeout.
+
+Start model setup with `autoUpdate: false`, then synchronize that model's shared-ticker subscription with the overlay's visibility and enabled state. Stop the private Application ticker separately; never stop the global shared ticker, which may serve other consumers.
+
+Track only turns observed through `onTurnStarted`, together with their engine, session ID and workspace path. The host can announce a new native session ID after its first turn starts, so that creation event updates the pending identity rather than resetting the pet. Session lifecycle matching prevents an unrelated close from cancelling the tracked turn; callbacks received after the tracked turn is released are ignored.
 
 ## Alternatives
 

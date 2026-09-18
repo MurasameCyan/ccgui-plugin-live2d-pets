@@ -33,10 +33,12 @@ interface DebugMotionItem {
 interface ModelLike {
   width: number
   height: number
+  autoUpdate: boolean
   anchor: { set(x: number, y: number): void }
   scale: { set(s: number): void }
   position: { set(x: number, y: number): void }
   motion(name: string, index?: number, priority?: MotionPriority): Promise<boolean>
+  destroy(): void
   focus(x: number, y: number, instant?: boolean): void
   hitTest(x: number, y: number): string[]
   getBounds?: () => { x: number; y: number; width: number; height: number }
@@ -123,7 +125,14 @@ declare const PIXI: {
     renderer: { resize(width: number, height: number): unknown };
     destroy(remove: boolean): void;
   };
-  live2d?: { Live2DModel?: { from(url: string, options?: Record<string, unknown>): Promise<unknown> } };
+  live2d?: { Live2DModel?: {
+    fromSync(url: string, options: {
+      autoInteract: boolean;
+      autoUpdate: boolean;
+      onLoad(): void;
+      onError(error: unknown): void;
+    }): ModelLike;
+  } };
 };
 
 
@@ -285,6 +294,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let model: ModelLike | null = null
   let hitAreas: string[] = []
   let currentModelUrl: string | null = null
+  let vendorsReady = false
   let fallbackShown = false
   let fallbackEl: HTMLDivElement | null = null
   // 模型基础尺寸（scale=1 时捕获一次；避免按当前 scale 累积误差）。
@@ -329,6 +339,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   function syncTicker(): void {
     if (!app) return
     const shouldRun = enabled && !hidden
+    // Live2D owns a separate shared-ticker subscription; pause only this
+    // model, never PIXI.Ticker.shared (which other plugins may also use).
+    if (model) model.autoUpdate = shouldRun
     if (shouldRun) { try { app.ticker.start() } catch { /* 已启动 */ } }
     else { try { app.ticker.stop() } catch { /* 已停止 */ } }
   }
@@ -641,6 +654,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
 
   /** 销毁当前渲染层（app/canvas/模型引用/静态头像占位）。 */
   function teardownLayer(): void {
+    down = null
+    if (dragging) {
+      dragging = false
+      showStageText()
+    }
     // 作废旧模型的所有动作启动/互动恢复；焦点抑制复位
     motionSeq += 1
     interactionGen += 1
@@ -653,6 +671,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
     stopZoneLoop()
+    // Application.destroy() does not destroy stage children by default.
+    // Release the model's Cubism core before disposing its PIXI application.
+    if (model) { try { model.destroy() } catch { /* 已销毁 */ } }
     if (app) { try { app.destroy(true) } catch { /* 已销毁 */ } }
     app = null
     model = null
@@ -674,6 +695,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   async function loadModelLayer(url: string | null): Promise<void> {
     teardownLayer()
     if (disposed) return
+    // A model switch can supersede a pending size frame during teardown.
+    pos.size = view?.config.size ?? pos.size
     if (!url || !box) {
       showFallback()
       return
@@ -712,14 +735,33 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         powerPreference: 'low-power',
       })
       try { app.ticker.maxFPS = maxFps } catch { /* 旧 ticker */ }
+      syncTicker()
 
-      const loaded = await M.from(url, { autoInteract: false }) as ModelLike
+      const loaded = await new Promise<ModelLike>((resolve, reject) => {
+        // from() loses the instance when textures fail after core creation.
+        // fromSync returns it before either async setup callback can run.
+        const pending = M.fromSync(url, {
+          autoInteract: false,
+          autoUpdate: false,
+          onLoad: () => resolve(pending),
+          onError: (error) => {
+            // Vendor destroy() dereferences internalModel unconditionally;
+            // an early JSON/setup failure has no Cubism core to release.
+            if (pending.internalModel) {
+              try { pending.destroy() } catch { /* 保留原始加载错误 */ }
+            }
+            reject(error)
+          },
+        })
+      })
       if (disposed) {
-        // 挂载已拆除（StrictMode/HMR）：弃用本层，不绑定事件
+        // The model was never added to the stage, so teardown cannot own it.
+        loaded.destroy()
         teardownLayer()
         return
       }
       model = loaded
+      syncTicker()
       // 基础尺寸：优先用模型实际包围盒（getBounds），拿不到再退回 loaded.width/height
       baseModelW = Number(loaded.width) || 0
       baseModelH = Number(loaded.height) || 0
@@ -1061,11 +1103,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     // 帧率：立刻改 ticker.maxFPS（0 = 不限制）
     applyMaxFps(cfg.maxFps)
     // 尺寸：合并后重设画布 + 模型适配（避免连发 SSE 同步卡死主线程）
-    const nextSize = cfg.size
-    if (nextSize !== pos.size) scheduleSize(nextSize)
+    scheduleSize(cfg.size)
     // 模型：modelUrl 变化 → 重载
     const nextUrl = cfg.modelUrl || null
-    if (nextUrl !== currentModelUrl) {
+    if (vendorsReady && nextUrl !== currentModelUrl) {
       currentModelUrl = nextUrl
       queueModelLoad(nextUrl)
     }
@@ -1181,7 +1222,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       view = runtime.snapshot();
       pos = { ...view.display, size: view.config.size };
 
-      // 2. 顶层容器（Popover API，回退 body + max z）
+      // 2. Pointer-transparent anchor inside the host's viewport overlay.
       box = anchor;
       box.style.cssText = `position:absolute;inset:auto;top:auto;left:auto;right:${pos.right}px;bottom:${pos.bottom}px;margin:0;padding:0;border:none;background:transparent;width:auto;height:auto;overflow:visible;pointer-events:none`;
 
@@ -1190,16 +1231,51 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       bubble.style.cssText = 'position:absolute;left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:8px;padding:4px 10px;background:rgba(255,255,255,.95);color:#222;border-radius:999px;font:12px/1.5 sans-serif;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none'
       box.appendChild(bubble)
 
-      // 3. vendor scripts through the reviewed bundle asset bridge.
+      // Subscribe before any asset await. Position, visibility and state must
+      // remain reactive during loading and after a vendor/model failure.
+      const handleState = (next: PetStateView): void => {
+        if (disposed) return
+        view = next
+        // A runtime event must not replace unsaved coordinates mid-drag.
+        // Rendering size stays local until applyConfig schedules its update.
+        if (!dragging) {
+          pos = { right: next.display.right, bottom: next.display.bottom, size: pos.size }
+          if (box) {
+            box.style.right = `${pos.right}px`
+            box.style.bottom = `${pos.bottom}px`
+          }
+        }
+        applyConfig(next)
+        applyState(next)
+      }
+      pushCleanup(runtime.subscribe(handleState))
+
+      const onVisibility = () => { hidden = document.visibilityState !== 'visible'; syncTicker() }
+      const onBlur = () => { hidden = true; syncTicker() }
+      const onFocus = () => { hidden = false; syncTicker() }
+      document.addEventListener('visibilitychange', onVisibility)
+      window.addEventListener('blur', onBlur)
+      window.addEventListener('focus', onFocus)
+      pushCleanup(() => {
+        document.removeEventListener('visibilitychange', onVisibility)
+        window.removeEventListener('blur', onBlur)
+        window.removeEventListener('focus', onFocus)
+      })
+      handleState(runtime.snapshot())
+
+      // 3. Vendor scripts through the reviewed bundle asset bridge.
       for (const path of VENDOR_SCRIPTS) {
         await loadScript(runtime.bundleAssetUrl(path));
         if (disposed) return;
       }
+      vendorsReady = true
 
-      // 4. 初始模型（config.modelUrl：Host 解析后的 .model3.json URL，spec §6）
+      // 4. Initial and subsequent model loads share one queue, including
+      // changes received while the first model is still loading.
       const initialUrl = view?.config.modelUrl || null
       currentModelUrl = initialUrl
-      await loadModelLayer(initialUrl)
+      queueModelLoad(initialUrl)
+      await modelLoadQueue
       if (disposed) return
 
       // 4.1 全局鼠标跟随（spec §4）：页面任意位置移动→头/眼/身体看向鼠标；
@@ -1213,36 +1289,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         document.removeEventListener('mouseout', onGlobalMouseOut)
       })
 
-      // 5. Subscribe to host turn state through the plugin hook runtime.
-      //    Every update is a complete immutable snapshot.
-      const handleState = (next: PetStateView): void => {
-        if (disposed) return
-        view = next
-        // 位置取持久化值；渲染尺寸保持现状，由 applyConfig 负责 diff 与更新
-        pos = { right: next.display.right, bottom: next.display.bottom, size: pos.size }
-        applyConfig(next)
-        applyState(next)
-      }
-      const closeEvents = runtime.subscribe(handleState);
-      const onVisibility = () => { hidden = document.visibilityState !== 'visible'; syncTicker() }
-      const onBlur = () => { hidden = true; syncTicker() }
-      const onFocus = () => { hidden = false; syncTicker() }
-      document.addEventListener('visibilitychange', onVisibility)
-      window.addEventListener('blur', onBlur)
-      window.addEventListener('focus', onFocus)
-      pushCleanup(() => {
-        closeEvents();
-        document.removeEventListener('visibilitychange', onVisibility)
-        window.removeEventListener('blur', onBlur)
-        window.removeEventListener('focus', onFocus)
-      })
-
-      // 6. Apply the initial snapshot after the overlay and model are ready.
-      applyConfig(view);
-      applyState(view);
+      // Reconcile with the latest snapshot rather than the pre-load view.
+      handleState(runtime.snapshot())
     } catch (error) {
       // 静态头像降级（WebGL 不可用 / 模型加载失败，spec §7）
-      showFallback()
+      if (!disposed) showFallback()
     }
   })()
 
