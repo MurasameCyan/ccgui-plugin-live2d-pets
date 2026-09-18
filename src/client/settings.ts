@@ -52,13 +52,146 @@ const inputStyle = {
   background: "transparent",
   color: "inherit",
 };
-const nativeDropdownOptionStyle = {
-  color: "#111827",
-  backgroundColor: "#fff",
-};
 const sectionTitleStyle = { margin: "16px 0 8px", fontSize: 13, fontWeight: 600, color: "#888" };
 const panelTabStyle = { ...buttonStyle, marginLeft: 0, padding: "4px 12px" };
 const panelTabActiveStyle = { ...panelTabStyle, background: "rgba(120,170,255,.26)", color: "#fff" };
+
+const hostSelectTriggerClass = [
+  "flex h-8 w-auto cursor-pointer items-center justify-between gap-1 rounded-lg px-2 py-1.5",
+  "border border-border-button-default bg-background-primary-default shadow-xs text-text-primary",
+  "transition-[background-color,border-color,box-shadow,padding,font-size] duration-200 ease",
+  "hover:bg-background-primary-hover hover:border-border-button-hover",
+  "outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-border-focus-ring",
+  "disabled:cursor-not-allowed disabled:bg-background-primary-disabled disabled:text-text-tertiary disabled:shadow-none",
+].join(" ");
+const hostSelectMenuClass = [
+  "flex w-full flex-col gap-1 rounded-2xl border border-border-button-default",
+  "bg-background-primary-default p-2 shadow-dropdown outline-none",
+].join(" ");
+const hostSelectOptionClass = [
+  "flex w-full cursor-pointer items-center gap-2 rounded-2lg px-2 py-1.5 text-left",
+  "text-text-primary outline-none transition-colors",
+  "hover:bg-dropdown-item-hover-background focus-visible:bg-dropdown-item-hover-background",
+].join(" ");
+
+interface PersonaChoice { id: string; name: string }
+interface PersonaSelectProps {
+  value: string;
+  disabled: boolean;
+  options: PersonaChoice[];
+  onChange: (value: string) => void;
+}
+
+function PersonaSelect(props: PersonaSelectProps): ReactNode {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement | null>(null);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectedIndex = Math.max(0, props.options.findIndex((option) => option.id === props.value));
+  const selected = props.options[selectedIndex];
+
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: MouseEvent): void => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", dismiss);
+    return () => document.removeEventListener("mousedown", dismiss);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    optionRefs.current[selectedIndex]?.focus();
+  }, [open, selectedIndex]);
+
+  const close = (restoreFocus = false): void => {
+    setOpen(false);
+    if (restoreFocus) queueMicrotask(() => trigger.current?.focus());
+  };
+  const focusOption = (index: number): void => {
+    const count = props.options.length;
+    if (count === 0) return;
+    optionRefs.current[(index + count) % count]?.focus();
+  };
+  const onTriggerKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      if (open) event.preventDefault();
+      close();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) setOpen(true);
+      else focusOption(selectedIndex + (event.key === "ArrowDown" ? 1 : -1));
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setOpen((current) => !current);
+    }
+  };
+  const onOptionKeyDown = (event: KeyboardEvent, index: number): void => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close(true);
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      focusOption(index + (event.key === "ArrowDown" ? 1 : -1));
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      focusOption(event.key === "Home" ? 0 : props.options.length - 1);
+    }
+  };
+  const choose = (value: string): void => {
+    props.onChange(value);
+    close(true);
+  };
+
+  return createElement("div", { ref: root, style: { position: "relative", display: "inline-block" } },
+    createElement("button", {
+      ref: trigger,
+      type: "button",
+      role: "combobox",
+      "aria-label": "人设台词",
+      "aria-haspopup": "listbox",
+      "aria-expanded": String(open),
+      disabled: props.disabled,
+      className: hostSelectTriggerClass,
+      onClick: () => setOpen((current) => !current),
+      onKeyDown: onTriggerKeyDown,
+    },
+    createElement("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, selected?.name ?? props.value),
+    createElement("svg", {
+      viewBox: "0 0 16 16",
+      width: 14,
+      height: 14,
+      "aria-hidden": "true",
+      style: { flexShrink: 0, transform: open ? "rotate(180deg)" : "none", transition: "transform 150ms ease" },
+    }, createElement("path", { d: "M4 6l4 4 4-4", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round" }))),
+    open && createElement("div", {
+      role: "listbox",
+      "aria-label": "人设台词",
+      className: hostSelectMenuClass,
+      style: {
+        position: "absolute",
+        zIndex: 1000,
+        top: "calc(100% + 4px)",
+        left: 0,
+        width: 266,
+        maxWidth: "calc(100vw - 32px)",
+      },
+    }, props.options.map((option, index) => {
+      const isSelected = option.id === props.value;
+      return createElement("button", {
+        key: option.id,
+        ref: (element: HTMLButtonElement | null) => { optionRefs.current[index] = element; },
+        type: "button",
+        role: "option",
+        "aria-selected": String(isSelected),
+        tabIndex: isSelected ? 0 : -1,
+        className: `${hostSelectOptionClass}${isSelected ? " bg-dropdown-item-hover-background" : ""}`,
+        onClick: () => choose(option.id),
+        onKeyDown: (event: KeyboardEvent) => onOptionKeyDown(event, index),
+      }, option.name);
+    })),
+  );
+}
 
 const ANIMATION_SLOT_LABELS: Record<AnimationSlot, string> = {
   idle: "空闲",
@@ -431,7 +564,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       createElement("div", { style: sectionTitleStyle }, "人设台词"),
       createElement("div", { style: rowStyle },
         createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-          createElement("select", { value: view.config.persona, disabled: !writable, onChange: (event: Event) => write("persona", (event.currentTarget as HTMLSelectElement).value) }, personas.map((persona) => createElement("option", { key: persona.id, value: persona.id, style: nativeDropdownOptionStyle }, persona.name))),
+          createElement(PersonaSelect, { value: view.config.persona, disabled: !writable, options: personas, onChange: (value: string) => write("persona", value) }),
           createElement("button", { style: buttonStyle, onClick: () => { void runtime.reloadPersonas().then((result) => setNotice(result.error ?? "已重新读取人设文件")); } }, "↻ 重新读取"),
           createElement("button", { style: buttonStyle, onClick: () => { setPersonaFallback(false); openPath(view.personasFile, () => setPersonaFallback(true)); } }, "打开文件"),
         ),

@@ -101,17 +101,46 @@ describe("pet settings model sources", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps persona choices readable in the native Windows dropdown", async () => {
-    const { container } = await mountSettings();
-    const select = container.querySelector<HTMLSelectElement>("select");
-    const options = [...(select?.querySelectorAll("option") ?? [])];
+  it("uses the host menu styling for persona choices and persists a selection", async () => {
+    const { container, runtime } = await mountSettings();
+    const trigger = container.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="人设台词"]');
 
-    expect(select).not.toBeNull();
-    expect(options.length).toBeGreaterThan(1);
-    for (const option of options) {
-      expect(option.style.color).toBe("rgb(17, 24, 39)");
-      expect(option.style.backgroundColor).toBe("rgb(255, 255, 255)");
-    }
+    expect(container.querySelector("select")).toBeNull();
+    expect(trigger?.textContent).toContain("傲娇");
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => { trigger!.click(); });
+    const menu = container.querySelector<HTMLElement>('[role="listbox"][aria-label="人设台词"]');
+    const options = [...(menu?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? [])];
+    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+    expect(menu?.className).toContain("rounded-2xl");
+    expect(menu?.className).toContain("bg-background-primary-default");
+    expect(options.map((option) => option.textContent)).toEqual(["傲娇", "元气", "天然呆", "三无", "温柔治愈", "病娇"]);
+
+    await act(async () => { options[1]!.click(); await Promise.resolve(); });
+    expect(runtime.snapshot().config.persona).toBe("genki");
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it("supports keyboard navigation and dismisses the persona menu", async () => {
+    const { container } = await mountSettings();
+    const trigger = container.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="人设台词"]')!;
+
+    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    const options = [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(options[0]).toBe(document.activeElement);
+
+    await act(async () => { options[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    expect(options[1]).toBe(document.activeElement);
+
+    await act(async () => { options[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+    expect(trigger).toBe(document.activeElement);
+
+    await act(async () => { trigger.click(); });
+    await act(async () => { document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
   });
 
   it("adds a granted directory model and retains its selected source after reload", async () => {
