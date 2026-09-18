@@ -16,3 +16,4 @@
 | [008](008-motion-priority-and-focus-suppression.md) | Live2D 动作优先级与 focus 抑制规则 | Accepted |
 | [009](009-custom-model-animation-mapping.md) | 自定义模型动画映射与 debug 动画预览 | Accepted |
 | [010](010-local-model-host-route.md) | 本地模型通过 Host 路由加载 | Accepted |
+| [011](011-ccgui-plugin-port.md) | CC GUI Plugin SDK 移植：hooks、storage、assets、overlay | Accepted; supersedes DSH runtime decisions |

@@ -1,13 +1,19 @@
 # Changelog
 
-## [0.1.1] - 2026-08-14
-
-### Changed
-- 模型边界：预设从「可再分发、随包分发」改为「策展模型 URL 清单（纯 URL 直载、不打包）」；清单门槛降为「许可可标注」（NC 模型标注"仅限非商用"），默认模型 Hiyori（商用安全）
-- 依赖安装改用 bun（替换 npm）
+## [1.0.0] - 2026-09-18
 
 ### Added
-- README 快速开始：提示词安装方式（复制给 DSH agent 自动安装）+ 手动安装 + 自定义配置 + 卸载
+
+- CC GUI `PluginContext` activation with persistent overlay, settings section, command, runtime hooks, plugin storage, document storage, bundle assets, and directory grants.
+- Self-contained `main.js` build plus fixed vendor assets under `dist/vendor/`.
+- Local model support through explicit asset-directory grants.
+- Runtime, settings-helper, model, persona, and packaging regression checks.
+
+### Changed
+
+- Ported the original DSH Host/SSE implementation to the CC GUI SDK without changing the user-visible Live2D interaction model.
+- Replaced DSH absolute paths and HTTP routes with SDK-scoped storage and assets.
 
 ### Removed
-- npm 锁文件（package-lock.json），改用 bun.lock
+
+- DSH Cordis bundle patch, Host HTTP routes, SSE endpoint, and arbitrary filesystem access.

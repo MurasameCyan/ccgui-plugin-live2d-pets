@@ -1,0 +1,43 @@
+name: Test and package plugin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.1
+      - run: bun install --frozen-lockfile
+      - run: bun run validate
+      - name: Package installable plugin
+        shell: bash
+        run: |
+          version=$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")
+          mkdir -p package/ccgui-plugin-live2d-pets
+          cp dist/main.js dist/manifest.json README.md package/ccgui-plugin-live2d-pets/
+          cp -R dist/vendor package/ccgui-plugin-live2d-pets/vendor
+          cp -R dist/icons package/ccgui-plugin-live2d-pets/icons
+          cd package
+          zip -r "ccgui-plugin-live2d-pets-${version}.zip" ccgui-plugin-live2d-pets
+          sha256sum "ccgui-plugin-live2d-pets-${version}.zip" > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ccgui-plugin-live2d-pets
+          path: |
+            package/*.zip
+            package/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30

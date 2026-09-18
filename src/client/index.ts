@@ -1,39 +1,66 @@
 /**
- * dsh-live2d-pets 浏览器半区：挂载 Live2D 桌宠 + 「桌宠配置」设置页。
+ * CC GUI browser half: mounts the persistent Live2D overlay and handles all
+ * interaction locally. Runtime state arrives through PluginContext hooks;
+ * vendor scripts are bundled resources accessed through ctx.assets.
  *
- * 架构（ADR-005 / 004，spike pkg-9 实证）：
- * - `shell.overlay` 注册零尺寸锚点（生命周期/设置锚点）
- * - 视觉层用 Popover API（top layer，零 z-index）渲染，旧浏览器回退 body + 最大 z-index
- * - 运行时脚本与预设模型走 Host 同源路由（/pet-assets/*），无 CDN 依赖
- * - agent 状态经 /api/live2d-pet/events SSE 推送（首帧快照 + 变更推送，ADR-006）；
- *   标签页隐藏/窗口失焦暂停渲染循环，恢复时继续（spec §7）
- * - 点击/拖动按 6px 阈值判定；自由位置拖动，松手持久化（spec §4）
- * - 鼠标跟随：document 级 pointermove 调用 model.focus()，头/眼/身体看向鼠标；移出页面复位；
- *   非 idle 动作播放期间抑制 focus，避免动作关键帧被鼠标跟随叠加（spec §4）
- * - 配置（enabled/size/maxFps/debug/model）经状态推送运行时应用：开关→显隐+停启渲染、
- *   尺寸→重设画布与模型适配、帧率→ticker.maxFPS、调试→动态面板、模型→按 modelUrl 重载（spec §2/§6/§7）
- * @module dsh-live2d-pets/client
+ * The overlay host supplies a fixed, pointer-transparent viewport. This
+ * module owns the interactive canvas, position persistence, model loading,
+ * state bubbles, motion priority, focus suppression, and visibility throttling.
  */
 
-import { createElement, useEffect, useRef } from 'react'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ReactNode } from 'react'
-import type { PetState, PetStateView } from '../service.ts'
-import { PetSettingsSection } from './settings.ts'
-import { installPetSettingsNavIcon, pawNavIcon } from './paw-icon.ts'
-import { resolvePersonaCopy, BUILTIN_PERSONAS } from './personas.ts'
-import type { CopyTable } from '../persona-shared.ts'
-import { DEFAULT_PERSONA_ID } from '../persona-shared.ts'
+import { createElement, useEffect, useRef } from "../react-runtime";
+import type { ReactNode } from "../sdk";
+import type { PetRuntime, PetState, PetStateView } from "../runtime";
+import { resolvePersonaCopy } from "./personas";
+import type { CopyTable } from "../persona-shared";
+import { DEFAULT_PERSONA_ID } from "../persona-shared";
 import {
   DEFAULT_MOTION_MAP,
   DEFAULT_SPATIAL_TAP,
   type AnimationSlot,
   type MotionMap,
   type SpatialTapConfig,
-} from '../models.ts'
+} from "../models";
 
-/** 注入所需服务。 */
-export const inject = ['slots']
+interface DisplayLike { right: number; bottom: number; size: number }
+
+interface DebugMotionItem {
+  group: string
+  index: number
+  label: string
+}
+
+interface ModelLike {
+  width: number
+  height: number
+  anchor: { set(x: number, y: number): void }
+  scale: { set(s: number): void }
+  position: { set(x: number, y: number): void }
+  motion(name: string, index?: number, priority?: MotionPriority): Promise<boolean>
+  focus(x: number, y: number, instant?: boolean): void
+  hitTest(x: number, y: number): string[]
+  getBounds?: () => { x: number; y: number; width: number; height: number }
+  internalModel?: {
+    hitAreas?: Record<string, unknown>
+    focusController?: { focus(x: number, y: number, instant?: boolean): void }
+    motionManager?: {
+      on?(event: "motionFinish", listener: () => void): unknown
+      off?(event: "motionFinish", listener: () => void): unknown
+      stopAllMotions?(): void
+      definitions?: Record<string, unknown>
+    }
+  }
+}
+
+type TapPart = "head" | "leg" | "arm" | "body"
+
+/** Vendor paths resolved through the host asset bridge. */
+const VENDOR_SCRIPTS = [
+  "vendor/pixi.min.js",
+  "vendor/live2dcubismcore.min.js",
+  "vendor/live2d-display.cubism4.min.js",
+];
+
 
 /** 点击/拖动判定阈值（px）。 */
 const DRAG_THRESHOLD = 6
@@ -83,93 +110,22 @@ const TRANSIENT_COPY_KEYS: Partial<Record<PetState, 'idle' | 'error' | 'done'>> 
   error: 'error',
   done: 'done',
 }
-/** vendor 运行时脚本（Host 同源路由，ADR-003）。 */
-const VENDOR_SCRIPTS = [
-  '/pet-assets/vendor/pixi.min.js',
-  '/pet-assets/vendor/live2dcubismcore.min.js',
-  '/pet-assets/vendor/live2d-display.cubism4.min.js',
-]
-
-const PET_API = '/api/live2d-pet'
-
-/** PIXI 全局（script 注入，非模块导入）。 */
+/** PIXI global (vendor scripts are loaded once by the plugin). */
 declare const PIXI: {
   Application: new (options: Record<string, unknown>) => {
-    stage: { addChild(child: unknown): unknown }
+    stage: { addChild(child: unknown): unknown };
     ticker: {
-      addOnce(fn: () => void): unknown
-      start(): unknown
-      stop(): unknown
-      maxFPS?: number
-    }
-    renderer: { resize(width: number, height: number): unknown }
-    destroy(remove: boolean): void
-  }
-  Point: new (x: number, y: number) => unknown
-  live2d?: {
-    Live2DModel?: {
-      from(url: string, options?: Record<string, unknown>): Promise<unknown>
-    }
-  }
-}
+      addOnce(fn: () => void): unknown;
+      start(): unknown;
+      stop(): unknown;
+      maxFPS?: number;
+    };
+    renderer: { resize(width: number, height: number): unknown };
+    destroy(remove: boolean): void;
+  };
+  live2d?: { Live2DModel?: { from(url: string, options?: Record<string, unknown>): Promise<unknown> } };
+};
 
-/** 最小 slots 服务结构类型（运行时由 DSH 提供）。 */
-interface SlotsLike {
-  inject(key: string, callback: () => () => void): () => void
-  register(
-    options: {
-      name: string
-      id: string
-      order?: number
-      label?: string | (() => string)
-      /** 设置导航图标：ReactNode 或按尺寸渲染（与 better-sidebar 等同款约定）。 */
-      icon?: ReactNode | ((size: number) => ReactNode)
-      inject?: () => Record<string, unknown>
-    },
-    component: (props: unknown) => unknown,
-  ): () => void
-}
-
-interface DisplayLike { right: number; bottom: number; size: number }
-
-/** 调试预览用：模型中的一个具体动画（动作组 + 组内下标 + 展示名）。 */
-interface DebugMotionItem {
-  group: string
-  index: number
-  label: string
-}
-
-interface ModelLike {
-  width: number
-  height: number
-  anchor: { set(x: number, y: number): void }
-  scale: { set(s: number): void }
-  position: { set(x: number, y: number): void }
-  /** pixi-live2d-display 真实签名：motion(group, index?, priority?)，只传组名时随机播放该组并默认 NORMAL。 */
-  motion(name: string, index?: number, priority?: MotionPriority): Promise<boolean>
-  /** pixi-live2d-display 真实签名：focus(x, y) 吃 world space 坐标，内部平滑映射头/眼/身体参数。 */
-  focus(x: number, y: number, instant?: boolean): void
-  /** pixi-live2d-display 真实签名：hitTest(x, y) 返回**命中的区域名数组**（spec §4）。 */
-  hitTest(x: number, y: number): string[]
-  /** 模型在舞台/画布坐标下的包围盒（空间分档回退用）。 */
-  getBounds?: () => { x: number; y: number; width: number; height: number }
-  internalModel?: {
-    hitAreas?: Record<string, unknown>
-    focusController?: { focus(x: number, y: number, instant?: boolean): void }
-    motionManager?: {
-      /** MotionManager 事件：motionFinish 是动作真正播完的信号（motion() 的 Promise 只代表开始）。 */
-      on?(event: 'motionFinish', listener: () => void): unknown
-      off?(event: 'motionFinish', listener: () => void): unknown
-      /** 停掉当前队列并复位 MotionState；重播同一动作前需要先调用。 */
-      stopAllMotions?(): void
-      /** 模型定义的动作组名 → 动作定义列表（debug 预览枚举用）。 */
-      definitions?: Record<string, unknown>
-    }
-  }
-}
-
-/** 互动部位（spec §4 四档分部位）。 */
-type TapPart = 'head' | 'leg' | 'arm' | 'body'
 
 /** 命中区域名 → 部位分桶（正则容错：不同模型命名不一）；未匹配的命中区域归身体。 */
 const TAP_PART_MATCHERS: Array<{ part: TapPart; re: RegExp }> = [
@@ -249,35 +205,6 @@ function pickLine(pool: readonly string[], avoid?: string): string | undefined {
   return list[Math.floor(Math.random() * list.length)]
 }
 
-/** JSON 响应读取:非 2xx 抛错——错误响应不得当作合法视图/结果解析。 */
-async function readJson<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`http ${res.status}`)
-  return await res.json() as T
-}
-
-const api = {
-  state: (): Promise<PetStateView> => fetch(`${PET_API}/state`).then((res) => readJson<PetStateView>(res)),
-  /** SSE 状态订阅（ADR-006）：每次推送回调最新快照；断线由 EventSource
-   *  自动重连（服务端 retry 3s），重连后首帧即全量快照。返回退订函数。 */
-  events: (onState: (view: PetStateView) => void, onError: () => void): (() => void) => {
-    const es = new EventSource(`${PET_API}/events`)
-    es.onmessage = (ev: MessageEvent<string>) => {
-      try {
-        onState(JSON.parse(ev.data) as PetStateView)
-      } catch {
-        // 忽略坏帧，等待下一条
-      }
-    }
-    es.onerror = onError
-    return () => es.close()
-  },
-  setDisplay: (patch: { right?: number; bottom?: number }): Promise<{ ok: boolean }> =>
-    fetch(`${PET_API}/set-display`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(patch),
-    }).then((res) => readJson<{ ok: boolean }>(res)),
-}
 
 /** vendor 脚本加载去重：同一 src 只注入一次、只等待同一份结果
  * （boot 在 StrictMode/HMR 下会重复执行，避免二次注入与重复初始化）。 */
@@ -298,29 +225,29 @@ function loadScript(src: string): Promise<void> {
   return pending
 }
 
-/** 零尺寸锚点组件：占位 shell.overlay 席位，实际渲染在 popover 顶层容器。 */
-function PetAnchor(): ReturnType<typeof createElement> {
-  const ref = useRef<HTMLDivElement | null>(null)
-  useEffect(() => boot(ref.current), [])
-  return createElement('div', { ref, style: { width: 0, height: 0 } })
+interface PetAnchorProps { runtime: PetRuntime }
+
+function PetAnchor(props: PetAnchorProps): ReactNode {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => boot(ref.current, props.runtime), [props.runtime]);
+  return createElement("div", { ref, style: { width: 0, height: 0 } });
 }
 
-function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
-  if (!anchor) return undefined
+function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) | undefined {
+  if (!anchor) return undefined;
   const cleanup: Array<() => void> = []
   const pushCleanup = (fn: () => void) => { cleanup.push(fn) }
-
-  // 卸载守卫：置位后 boot 的异步流程在每个 await 点提前退出，
-  // 避免 StrictMode 双挂载 / HMR 重挂载时残留第二份 PIXI app、SSE 订阅与脚本注入。
+  // 卸载守卫：置位后异步加载在每个 await 点提前退出，避免重载残留。
   let disposed = false
   pushCleanup(() => { disposed = true })
-  // 阶段推进/瞬态气泡计时随卸载清理（HMR/StrictMode 重挂载不残留）
+  // 阶段推进/瞬态气泡计时随卸载清理。
   pushCleanup(() => { clearStages(); clearBubbleHideTimer() })
   pushCleanup(() => {
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
   })
   pushCleanup(() => { stopZoneLoop(); showSpatialZones = false })
+  pushCleanup(() => teardownLayer())
 
   let box: HTMLDivElement | null = null
   let bubble: HTMLDivElement | null = null
@@ -339,9 +266,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let petLayer: HTMLDivElement | null = null
   let zoneOverlay: HTMLCanvasElement | null = null
   let showSpatialZones = false
-  /** 当前模型生效的空间回退阈值（SSE config.spatialTap；默认 DEFAULT_SPATIAL_TAP）。 */
+  /** 当前模型生效的空间回退阈值（runtime 快照下发；默认 DEFAULT_SPATIAL_TAP）。 */
   let spatialTap: SpatialTapConfig = { ...DEFAULT_SPATIAL_TAP }
-  /** 当前模型生效的状态/互动动画映射（SSE config.motionMap；默认 DEFAULT_MOTION_MAP）。 */
+  /** 当前模型生效的状态/互动动画映射（runtime 快照下发；默认 DEFAULT_MOTION_MAP）。 */
   let motionMap: MotionMap = { ...DEFAULT_MOTION_MAP }
   let zoneRaf = 0
   let app: {
@@ -360,11 +287,10 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let currentModelUrl: string | null = null
   let fallbackShown = false
   let fallbackEl: HTMLDivElement | null = null
-  // 模型基础尺寸（scale=1 时捕获一次；Pixi Container.width 含当前 scale，
-  // 若每次 fit 都现读会按 1/s0 累积误差导致越放越大被画布裁剪）
+  // 模型基础尺寸（scale=1 时捕获一次；避免按当前 scale 累积误差）。
   let baseModelW = 0
   let baseModelH = 0
-  // 尺寸变更合并：SSE 连发时只落地最后一档，避免主线程串行多次 WebGL resize（实测单次可达数秒）
+  // 尺寸变更合并：连续设置更新只落地最后一档，避免串行 WebGL resize。
   let pendingSize: number | null = null
   let sizeRaf = 0
   let lastTapAt = 0
@@ -378,9 +304,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   let interactionActive = false
   /** 是否抑制鼠标跟随：非 idle 动作播放期间为 true（spec §4）。 */
   let focusSuppressed = false
-  /** 最近一次全局 pointermove 的 client 坐标；动作结束后用于立即恢复跟随。 */
   let lastPointerClient: { x: number; y: number } | null = null
-  /** 当前模型 motionManager 的 motionFinish 解绑函数（模型重载/卸载时清理）。 */
   let detachMotionFinish: (() => void) | null = null
   let bubbleHideTimer: number | undefined
   let stageTimers: number[] = []
@@ -702,7 +626,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     }
   }
 
-  /** 合并同帧/连发的尺寸变更：只落地最后一档（防 SSE 风暴卡死主线程）。 */
+  /** 合并同帧/连发的尺寸变更：只落地最后一档，避免串行 WebGL resize。 */
   function scheduleSize(nextSize: number): void {
     if (nextSize === pos.size && pendingSize === null) return
     pendingSize = nextSize
@@ -788,7 +712,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         powerPreference: 'low-power',
       })
       try { app.ticker.maxFPS = maxFps } catch { /* 旧 ticker */ }
-      pushCleanup(() => { try { app?.destroy(true) } catch { /* 已销毁 */ } })
 
       const loaded = await M.from(url, { autoInteract: false }) as ModelLike
       if (disposed) {
@@ -1128,9 +1051,9 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
     if (box) box.style.display = cfg.enabled ? '' : 'none'
     enabled = cfg.enabled
     syncTicker()
-    // 调试面板 + 点击分区（开发者选项，互不强制绑定）
-    ensureDebugPanel(cfg.debug)
-    setSpatialZonesVisible(!!cfg.showTapZones)
+    // 开发者总开关关闭时，调试面板与分区叠加均必须零渲染。
+    ensureDebugPanel(cfg.developerMode && cfg.debug)
+    setSpatialZonesVisible(cfg.developerMode && !!cfg.showTapZones)
     // 空间回退阈值：随当前模型解析结果热更新（自定义可覆盖；色块与分档共用）
     if (cfg.spatialTap) spatialTap = { ...cfg.spatialTap }
     // 动画映射：随当前模型解析结果热更新（自定义/内置可覆盖；缺省默认）
@@ -1175,7 +1098,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   function handlePointerUp(e: PointerEvent): void {
     if (!down) return
     if (dragging) {
-      api.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {})
+      void runtime.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {});
       // 拖拽中隐藏的常驻气泡恢复当前阶段文案（spec §4：拖拽中暂停、结束恢复）
       showStageText()
     } else {
@@ -1253,30 +1176,24 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   void (async () => {
     try {
       // 1. 初始状态（配置 + 显示位置）
-      try { view = await api.state() } catch { /* 首帧前 API 不可用则用默认 */ }
-      if (disposed) return
-      if (view) pos = { ...view.display, size: view.config.size }
+      await runtime.waitUntilReady();
+      if (disposed) return;
+      view = runtime.snapshot();
+      pos = { ...view.display, size: view.config.size };
 
       // 2. 顶层容器（Popover API，回退 body + max z）
-      box = document.createElement('div')
-      const popoverSupported = typeof box.showPopover === 'function'
-      // UA 对 [popover] 默认 inset:0 + margin:auto（居中）、border:solid + Canvas 背景，
-      // 必须显式重置（ADR-005 实证：居中 + 边框/背景两处坑）
-      box.style.cssText = `position:fixed;inset:auto;top:auto;left:auto;right:${pos.right}px;bottom:${pos.bottom}px;margin:0;padding:0;border:none;background:transparent;width:auto;height:auto;overflow:visible;pointer-events:none${popoverSupported ? '' : ';z-index:2147483647'}`
-      if (popoverSupported) box.setAttribute('popover', 'manual')
-      document.body.appendChild(box)
-      if (popoverSupported) { try { box.showPopover() } catch { /* 已显示 */ } }
-      pushCleanup(() => { box?.parentNode?.removeChild(box) })
+      box = anchor;
+      box.style.cssText = `position:absolute;inset:auto;top:auto;left:auto;right:${pos.right}px;bottom:${pos.bottom}px;margin:0;padding:0;border:none;background:transparent;width:auto;height:auto;overflow:visible;pointer-events:none`;
 
       // 气泡层
       bubble = document.createElement('div')
       bubble.style.cssText = 'position:absolute;left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:8px;padding:4px 10px;background:rgba(255,255,255,.95);color:#222;border-radius:999px;font:12px/1.5 sans-serif;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none'
       box.appendChild(bubble)
 
-      // 3. vendor 脚本（Host 同源）
-      for (const src of VENDOR_SCRIPTS) {
-        await loadScript(src)
-        if (disposed) return
+      // 3. vendor scripts through the reviewed bundle asset bridge.
+      for (const path of VENDOR_SCRIPTS) {
+        await loadScript(runtime.bundleAssetUrl(path));
+        if (disposed) return;
       }
 
       // 4. 初始模型（config.modelUrl：Host 解析后的 .model3.json URL，spec §6）
@@ -1296,8 +1213,8 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         document.removeEventListener('mouseout', onGlobalMouseOut)
       })
 
-      // 5. 状态订阅（SSE 推送，ADR-006）：替代 v0.1 的 800ms 轮询。
-      //    断线由 EventSource 自动重连，重连后首帧即全量快照，无需补偿拉取。
+      // 5. Subscribe to host turn state through the plugin hook runtime.
+      //    Every update is a complete immutable snapshot.
       const handleState = (next: PetStateView): void => {
         if (disposed) return
         view = next
@@ -1306,13 +1223,7 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
         applyConfig(next)
         applyState(next)
       }
-      let closeEvents: (() => void) | undefined
-      try {
-        closeEvents = api.events(handleState, () => { /* 断线重连中，EventSource 自动重试 */ })
-      } catch {
-        // EventSource 不可用：保留首帧快照（静态宠物），不再更新
-      }
-      // 标签页隐藏/窗口失焦 → 暂停渲染循环；恢复时继续（spec §7）
+      const closeEvents = runtime.subscribe(handleState);
       const onVisibility = () => { hidden = document.visibilityState !== 'visible'; syncTicker() }
       const onBlur = () => { hidden = true; syncTicker() }
       const onFocus = () => { hidden = false; syncTicker() }
@@ -1320,17 +1231,15 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
       window.addEventListener('blur', onBlur)
       window.addEventListener('focus', onFocus)
       pushCleanup(() => {
-        closeEvents?.()
+        closeEvents();
         document.removeEventListener('visibilitychange', onVisibility)
         window.removeEventListener('blur', onBlur)
         window.removeEventListener('focus', onFocus)
       })
 
-      // 6. 初始应用（含开关/尺寸/调试/模型；SSE 首帧到达前先用已拉到的快照）
-      if (view) {
-        applyConfig(view)
-        applyState(view)
-      }
+      // 6. Apply the initial snapshot after the overlay and model are ready.
+      applyConfig(view);
+      applyState(view);
     } catch (error) {
       // 静态头像降级（WebGL 不可用 / 模型加载失败，spec §7）
       showFallback()
@@ -1340,51 +1249,6 @@ function boot(anchor: HTMLDivElement | null): (() => void) | undefined {
   return () => { for (const fn of cleanup) { try { fn() } catch { /* 忽略清理错误 */ } } }
 }
 
-/** 插件入口。 */
-export function apply(ctx: ClientContext): void {
-  const slots = ctx.get('slots') as SlotsLike | undefined
-  if (slots === undefined) return
-  slots.inject('shell.overlay', () => slots.register(
-    { name: 'shell.overlay', id: 'live2d-pet' },
-    () => createElement(PetAnchor),
-  ))
-
-  // 「自定义人设 ↗」直达打开（spec §2）：优先经 DSH workspaces.openPath 用系统
-  // 默认程序打开人设文件；服务不存在/无权限/打开失败由设置页弹层兜底。
-  const openPath = async (path: string): Promise<boolean> => {
-    try {
-      const workspaces = ctx.get('workspaces') as { openPath?: (p: string) => Promise<void> } | undefined
-      if (!workspaces?.openPath) return false
-      await workspaces.openPath(path)
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  // 桌宠配置设置页（settings.section，spec §2）：开关/尺寸/人设/模型列表/调试，
-  // 读写经插件自身 API（/api/live2d-pet/settings，Host 直连 ctx.settings；
-  // 不走 settingsScope wire，见 docs/research/settings-tab.md「设置服务不可用」根因）。
-  // 桌宠配置设置页（settings.section，spec §2）：开关/尺寸/人设/模型列表/调试，
-  // 读写经插件自身 API（/api/live2d-pet/settings，Host 直连 ctx.settings；
-  // 不走 settingsScope wire，见 docs/research/settings-tab.md「设置服务不可用」根因）。
-  // 导航爪印：平台 settings-general 按 id 硬编码图标（未知 id→齿轮），故 register.icon
-  // 暂不生效；installPetSettingsNavIcon 在 DOM 层替换，卸载时一并清理。
-  slots.inject('settings.section', () => {
-    const stopNavIcon = installPetSettingsNavIcon()
-    const disposeSection = slots.register(
-      {
-        name: 'settings.section',
-        id: 'live2d-pet',
-        order: 200,
-        label: () => '桌宠配置',
-        icon: pawNavIcon,
-      },
-      () => createElement(PetSettingsSection, { openPath }),
-    )
-    return () => {
-      stopNavIcon()
-      disposeSection()
-    }
-  })
+export function createPetOverlay(runtime: PetRuntime): (props: Record<string, never>) => ReactNode {
+  return () => createElement(PetAnchor, { runtime });
 }

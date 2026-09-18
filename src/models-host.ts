@@ -1,117 +1,37 @@
-/**
- * Host 侧模型清单读取与解析：内置 presets.jsonc（JSONC 支持注释）由 Node 读取。
- * 本模块不可被 client 打包引入（依赖 node:fs / node:path / node:url）。
- * 共享类型与默认值见 `models.ts`。
- * @module dsh-live2d-pets/models-host
- */
-
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_MOTION_MAP,
+  DEFAULT_SPATIAL_TAP,
   isRemoteModelUrl,
   mergeSpatialTap,
   type BuiltinPreset,
   type CustomModelEntry,
   type MotionMap,
   type SpatialTapConfig,
-} from './models.ts'
-import { localModelUrlPath } from './local-models.ts'
+} from "./models";
 
-/** 简易 JSONC 解析：去掉行注释和块注释（字符串内的注释保留）后 JSON.parse。 */
-function parseJsonc(text: string): unknown {
-  let out = ''
-  let inString = false
-  let quote = ''
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
-    const next = text[i + 1]
-    if (inString) {
-      out += ch
-      if (ch === '\\') {
-        out += next ?? ''
-        i++
-      } else if (ch === quote) {
-        inString = false
-      }
-      continue
-    }
-    if (ch === '"' || ch === "'") {
-      inString = true
-      quote = ch
-      out += ch
-      continue
-    }
-    if (ch === '/' && next === '/') {
-      while (i < text.length && text[i] !== '\n') i++
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      i += 2
-      while (i + 1 < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++
-      i++
-      continue
-    }
-    out += ch
-  }
-  return JSON.parse(out)
+export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
+  { id: "hiyori", name: "Hiyori（百瀬ひより）", author: "Live2D Inc.", modelUrl: "https://cdn.jsdelivr.net/gh/Live2D/CubismWebSamples@develop/Samples/Resources/Hiyori/Hiyori.model3.json", license: { type: "Live2D 示例模型条款", url: "https://www.live2d.com/eula/live2d-sample-model-terms_cn.html" }, cubism: 4, status: "annotated", spatialTap: { headMaxNy: 0.30, legMinNy: 0.57, armMinNy: 0.28, headMinNx: 0.32, headMaxNx: 0.68, bodyMinNx: 0.36, bodyMaxNx: 0.64, armLeftMinNx: 0.18, armRightMaxNx: 0.82 } },
+  { id: "haru", name: "Haru（春）", author: "Live2D Inc.", modelUrl: "https://cdn.jsdelivr.net/gh/Live2D/CubismWebSamples@develop/Samples/Resources/Haru/Haru.model3.json", license: { type: "Live2D 示例模型条款", url: "https://www.live2d.com/eula/live2d-sample-model-terms_cn.html" }, cubism: 4, status: "annotated" },
+  { id: "mao", name: "Mao", author: "Live2D Inc.", modelUrl: "https://cdn.jsdelivr.net/gh/Live2D/CubismWebSamples@develop/Samples/Resources/Mao/Mao.model3.json", license: { type: "Live2D 示例模型条款", url: "https://www.live2d.com/eula/live2d-sample-model-terms_cn.html" }, cubism: 4, status: "annotated" },
+  { id: "mark", name: "Mark", author: "Live2D Inc.", modelUrl: "https://cdn.jsdelivr.net/gh/Live2D/CubismWebSamples@develop/Samples/Resources/Mark/Mark.model3.json", license: { type: "Live2D 示例模型条款", url: "https://www.live2d.com/eula/live2d-sample-model-terms_cn.html" }, cubism: 4, status: "annotated" },
+  { id: "natori", name: "Natori", author: "Live2D Inc.", modelUrl: "https://cdn.jsdelivr.net/gh/Live2D/CubismWebSamples@develop/Samples/Resources/Natori/Natori.model3.json", license: { type: "Live2D 示例模型条款", url: "https://www.live2d.com/eula/live2d-sample-model-terms_cn.html" }, cubism: 4, status: "annotated" },
+];
+
+export function listBuiltinPresets(): BuiltinPreset[] { return BUILTIN_PRESETS.map((preset) => ({ ...preset, license: { ...preset.license }, spatialTap: preset.spatialTap ? { ...preset.spatialTap } : undefined })); }
+export function resolveSpatialTap(model: string, customModels: readonly CustomModelEntry[]): SpatialTapConfig {
+  const custom = customModels.find((entry) => entry.id === model);
+  if (custom?.spatialTap) return mergeSpatialTap(custom.spatialTap);
+  return mergeSpatialTap(BUILTIN_PRESETS.find((preset) => preset.id === model)?.spatialTap);
 }
-
-/** 包根目录（从本模块位置解析：源码测试时指向仓库根，构建后 lib/ 的上一级即包根）。 */
-function packageRoot(): string {
-  return fileURLToPath(new URL('../', import.meta.url))
+export function resolveMotionMap(model: string, customModels: readonly CustomModelEntry[]): MotionMap {
+  const custom = customModels.find((entry) => entry.id === model);
+  const preset = BUILTIN_PRESETS.find((entry) => entry.id === model);
+  return { ...DEFAULT_MOTION_MAP, ...(custom?.animationMap ?? preset?.animationMap ?? {}) };
 }
-
-const presetsData = parseJsonc(
-  readFileSync(join(packageRoot(), 'src/presets/presets.jsonc'), 'utf8'),
-) as { presets: BuiltinPreset[] }
-
-/** 内置策展清单（只读，来自 presets.jsonc）。 */
-export function listBuiltinPresets(): BuiltinPreset[] {
-  return presetsData.presets
+export function resolveModelLocation(model: string, customModels: readonly CustomModelEntry[]): string | null {
+  if (isRemoteModelUrl(model)) return model;
+  const preset = BUILTIN_PRESETS.find((entry) => entry.id === model);
+  if (preset) return preset.modelUrl;
+  return customModels.find((entry) => entry.id === model)?.modelUrl ?? null;
 }
-
-/**
- * 按当前选中模型解析生效空间阈值：
- * 自定义条目覆盖优先；否则内置 preset 的 `spatialTap`；再否则全局默认。
- */
-export function resolveSpatialTap(model: string, customModels: CustomModelEntry[]): SpatialTapConfig {
-  const custom = customModels.find((c) => c.id === model)
-  if (custom?.spatialTap) return mergeSpatialTap(custom.spatialTap)
-  const preset = presetsData.presets.find((p) => p.id === model)
-  return mergeSpatialTap(preset?.spatialTap)
-}
-
-/**
- * 按当前选中模型解析生效动画映射：
- * 自定义条目 animationMap 优先；否则内置 preset 的 animationMap；再否则默认映射。
- * 只做浅合并：配置过的槽位覆盖，未配置槽位沿用默认。
- */
-export function resolveMotionMap(model: string, customModels: CustomModelEntry[]): MotionMap {
-  const custom = customModels.find((c) => c.id === model)
-  if (custom?.animationMap) return { ...DEFAULT_MOTION_MAP, ...custom.animationMap }
-  const preset = presetsData.presets.find((p) => p.id === model)
-  if (preset?.animationMap) return { ...DEFAULT_MOTION_MAP, ...preset.animationMap }
-  return { ...DEFAULT_MOTION_MAP }
-}
-
-/**
- * 把 `config.model` 解析为可加载的 `.model3.json` URL：
- * - 已是 http(s) URL → 原样返回
- * - preset id → presets.jsonc 匹配
- * - 自定义模型 id → settings 用户层 customModels 匹配
- * 未命中返回 null（客户端降级静态头像）。
- */
-export function resolveModelUrl(model: string, customModels: CustomModelEntry[]): string | null {
-  if (isRemoteModelUrl(model)) return model
-  const preset = presetsData.presets.find((p) => p.id === model)
-  if (preset) return preset.modelUrl
-  const custom = customModels.find((c) => c.id === model)
-  if (custom) {
-    // 本地路径：转成 Host 同源虚拟 URL，浏览器通过 /pet-local-models/<id>/... 加载
-    if (isRemoteModelUrl(custom.modelUrl)) return custom.modelUrl
-    return localModelUrlPath(custom.id, custom.modelUrl)
-  }
-  return null
-}
+export const DEFAULT_TAP = DEFAULT_SPATIAL_TAP;

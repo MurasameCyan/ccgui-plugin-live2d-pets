@@ -1,0 +1,24 @@
+{
+  "id": "ccgui.live2d-pets",
+  "name": "Live2D Pets",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.4",
+  "sdkVersion": "^0.4",
+  "author": "MurasameCyan",
+  "description": "在 CC GUI 中显示可互动的 Live2D 桌宠，并镜像 AI 会话状态。",
+  "repo": "MurasameCyan/ccgui-plugin-live2d-pets",
+  "tier": "js",
+  "license": "MIT",
+  "permissions": [
+    "storage",
+    "plugin.storage",
+    "ui:settings-section",
+    "ui:overlay",
+    "ui:command",
+    "session.lifecycle.read",
+    "runtime.events.read",
+    "assets:bundle",
+    "assets:directory",
+    "network:cdn.jsdelivr.net"
+  ]
+}
