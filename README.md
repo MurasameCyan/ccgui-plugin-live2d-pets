@@ -5,7 +5,7 @@ CC GUI 的 Live2D 桌宠插件：镜像当前 AI 会话状态，支持分部位�
 ## 功能
 
 - 状态镜像：思考、等审批、出错、完成、空闲；状态通过 CC GUI `runtime.events.read` hook 驱动。
-- Live2D 渲染：PixiJS、Cubism Core、pixi-live2d-display 作为固定版本 bundle 资源随插件发布；模型文件不随插件分发。
+- Live2D 渲染：PixiJS、同版本官方 `@pixi/unsafe-eval` CSP 适配模块、Cubism Core、pixi-live2d-display 作为固定版本 bundle 资源随插件发布；模型文件不随插件分发。适配模块移除渲染路径对动态代码生成的依赖，不要求放宽宿主 CSP。
 - 互动：摸头、摸腿、摸手、点身体；HitArea 不完整时按模型包围盒分区回退；互动可打断当前动作并在结束后恢复。
 - 鼠标跟随：页面内移动时模型跟随，拖动、失焦、隐藏或动作播放时暂停。
 - 定位与性能：默认右下角、可拖动、位置持久化；40–400px 尺寸；30/60/不限制帧率；页面隐藏或窗口失焦时暂停 ticker。

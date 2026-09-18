@@ -6,6 +6,7 @@
 - Overlay 宿主为固定、空白区域 pointer-transparent 的视口；桌宠画布和控件自行启用 pointer events。
 - 插件激活时创建一个 `PetRuntime`，注册会话和运行时 hook；卸载时撤销注册、销毁 PIXI、取消 DOM 监听、计时器、rAF 和订阅。
 - 运行时 vendor 脚本通过 `ctx.assets.bundleUrl()` 加载。插件不使用远程 `<script>`。
+- PixiJS 6.5.10 加载后先加载同版本官方 `@pixi/unsafe-eval` 适配模块，再初始化 Live2D；以解释执行的 uniform 同步替代动态代码生成，不放宽宿主 CSP。
 - 位置、配置和状态订阅在异步资源加载前建立；vendor 或模型加载失败后继续生效。初次加载和后续模型切换使用同一串行队列。
 - 卸载释放已挂载模型的 Cubism core；模型已创建 core 后发生加载失败也要释放实例。卸载后才成功或失败的加载在结果到达时按初始化阶段回收，迟到的失败不再创建降级 DOM。
 - 宿主 SDK 范围为 `^0.4.3`；0.4.0–0.4.2 缺少所需能力，不满足兼容要求。

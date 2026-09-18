@@ -22,7 +22,7 @@ The CC GUI SDK provides the equivalent primitives needed for the user-visible be
 1. Remove the DSH Host service, route, SSE, Cordis, settings namespace, and package patch layers.
 2. Keep the client renderer and interaction state machine, replacing DSH state delivery with `PluginContext` hook callbacks.
 3. Store settings in plugin KV and store `personas.jsonc` plus `custom-models.jsonc` in private document storage.
-4. Ship the three vendor runtime scripts as reviewed bundle assets. Load them through `ctx.assets.bundleUrl`; never inject a remote script.
+4. Ship the vendor runtime scripts as reviewed bundle assets. Load them through `ctx.assets.bundleUrl`; never inject a remote script. Load the matching official `@pixi/unsafe-eval` 6.5.10 adapter immediately after PixiJS: despite its name, it replaces generated uniform synchronization with interpreted code so rendering works without relaxing the host CSP.
 5. Load curated model URLs through `ctx.assets.remoteUrl`. Manifest grants `network:cdn.jsdelivr.net` exactly. Custom remote model hosts are rejected unless a future manifest grants them.
 6. Replace arbitrary local filesystem paths and `/pet-local-models` with a user-selected asset directory grant plus a relative model path.
 7. Keep model rendering and interaction in the overlay component. The host overlay container remains pointer-transparent outside the interactive canvas.

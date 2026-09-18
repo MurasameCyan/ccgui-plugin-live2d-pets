@@ -59,6 +59,8 @@ type TapPart = "head" | "leg" | "arm" | "body"
 /** Vendor paths resolved through the host asset bridge. */
 const VENDOR_SCRIPTS = [
   "vendor/pixi.min.js",
+  // Replaces PIXI's generated uniform sync functions without weakening CSP.
+  "vendor/pixi-unsafe-eval.min.js",
   "vendor/live2dcubismcore.min.js",
   "vendor/live2d-display.cubism4.min.js",
 ];

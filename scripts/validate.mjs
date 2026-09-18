@@ -44,6 +44,8 @@ for (const relativePath of [
   "dist/main.js",
   "dist/manifest.json",
   "dist/vendor/pixi.min.js",
+  "dist/vendor/pixi-unsafe-eval.min.js",
+  "dist/vendor/pixi-unsafe-eval.LICENSE",
   "dist/vendor/live2dcubismcore.min.js",
   "dist/vendor/live2d-display.cubism4.min.js",
   "dist/icons/paw-print.svg",

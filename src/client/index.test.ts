@@ -147,6 +147,17 @@ describe("pet overlay display lifecycle", () => {
     vi.unstubAllGlobals();
   });
 
+  it("loads the CSP-compatible PIXI adapter before the Live2D renderer", async () => {
+    const { scripts, loadModel } = await mountPet();
+    expect(scripts.map((script) => script.src.split("/vendor/")[1])).toEqual([
+      "pixi.min.js",
+      "pixi-unsafe-eval.min.js",
+      "live2dcubismcore.min.js",
+      "live2d-display.cubism4.min.js",
+    ]);
+    expect(loadModel).toHaveBeenCalledOnce();
+  });
+
   it("resets the visible position without resetting the configured size", async () => {
     const { runtime, anchor, ctx } = await mountPet();
     expect(anchor.style.right).toBe("180px");

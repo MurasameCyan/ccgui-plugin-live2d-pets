@@ -30,6 +30,7 @@ describe("plugin package contract", () => {
   it("ships all fixed runtime assets alongside the entry bundle", () => {
     for (const relativePath of [
       "assets/vendor/pixi.min.js",
+      "assets/vendor/pixi-unsafe-eval.min.js",
       "assets/vendor/live2dcubismcore.min.js",
       "assets/vendor/live2d-display.cubism4.min.js",
       "assets/icons/paw-print.svg",
