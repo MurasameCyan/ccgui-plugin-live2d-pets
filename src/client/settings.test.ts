@@ -101,6 +101,19 @@ describe("pet settings model sources", () => {
     vi.unstubAllGlobals();
   });
 
+  it("keeps persona choices readable in the native Windows dropdown", async () => {
+    const { container } = await mountSettings();
+    const select = container.querySelector<HTMLSelectElement>("select");
+    const options = [...(select?.querySelectorAll("option") ?? [])];
+
+    expect(select).not.toBeNull();
+    expect(options.length).toBeGreaterThan(1);
+    for (const option of options) {
+      expect(option.style.color).toBe("rgb(17, 24, 39)");
+      expect(option.style.backgroundColor).toBe("rgb(255, 255, 255)");
+    }
+  });
+
   it("adds a granted directory model and retains its selected source after reload", async () => {
     const { container, runtime, savedModels, ctx, unmount } = await mountSettings();
     await fillLocalDraft(container);

@@ -52,6 +52,10 @@ const inputStyle = {
   background: "transparent",
   color: "inherit",
 };
+const nativeDropdownOptionStyle = {
+  color: "#111827",
+  backgroundColor: "#fff",
+};
 const sectionTitleStyle = { margin: "16px 0 8px", fontSize: 13, fontWeight: 600, color: "#888" };
 const panelTabStyle = { ...buttonStyle, marginLeft: 0, padding: "4px 12px" };
 const panelTabActiveStyle = { ...panelTabStyle, background: "rgba(120,170,255,.26)", color: "#fff" };
@@ -427,7 +431,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       createElement("div", { style: sectionTitleStyle }, "人设台词"),
       createElement("div", { style: rowStyle },
         createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-          createElement("select", { value: view.config.persona, disabled: !writable, onChange: (event: Event) => write("persona", (event.currentTarget as HTMLSelectElement).value) }, personas.map((persona) => createElement("option", { key: persona.id, value: persona.id }, persona.name))),
+          createElement("select", { value: view.config.persona, disabled: !writable, onChange: (event: Event) => write("persona", (event.currentTarget as HTMLSelectElement).value) }, personas.map((persona) => createElement("option", { key: persona.id, value: persona.id, style: nativeDropdownOptionStyle }, persona.name))),
           createElement("button", { style: buttonStyle, onClick: () => { void runtime.reloadPersonas().then((result) => setNotice(result.error ?? "已重新读取人设文件")); } }, "↻ 重新读取"),
           createElement("button", { style: buttonStyle, onClick: () => { setPersonaFallback(false); openPath(view.personasFile, () => setPersonaFallback(true)); } }, "打开文件"),
         ),
