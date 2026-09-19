@@ -82,10 +82,12 @@ const DEFAULT_MAX_FPS = 30
  * 绘制区域测量与指针命中探测都必须读“已渲染”的帧缓冲，NORMAL(0) 会读到空帧。
  */
 const TICKER_PRIORITY_UTILITY = -50
-/** 绘制区域采样窗口：加载后继续采样这么多 ticker 帧，覆盖待机动作的摆动极值。 */
+/** 绘制区域密集采样窗口：加载后这么多 ticker 帧内每 2 帧采样一次，覆盖起始动作摆动。 */
 const ART_SAMPLE_TICKS = 300
-/** 采样间隔（每 N 帧读一次帧缓冲）：15Hz 足够覆盖动作，读回开销可控。 */
+/** 密集采样间隔（每 N 帧读一次帧缓冲）。 */
 const ART_SAMPLE_EVERY = 2
+/** 采样窗口结束后的看门狗间隔（每 N 帧读一次）：迟到的动作/互动姿势仍会并入绘制区域。 */
+const ART_WATCHDOG_EVERY = 60
 /** 采样包围盒贴到画布边缘时的外扩量（画布像素）：说明测量被画布截断。 */
 const ART_EDGE_MARGIN_PX = 12
 /** 共用 alpha 阈值：>16 视为可见（绘制区域测量与指针命中判定一致）。 */
@@ -983,15 +985,16 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       // 用默认 NORMAL(0) 的回调会在首帧渲染前读到空帧缓冲（实测 alpha 全 0）。
       // 采样窗口覆盖待机动作的摆动极值：单帧包围盒会比后续姿态小，直接锁死会裁切模型。
       try {
-        let ticksLeft = ART_SAMPLE_TICKS
+        let dense = ART_SAMPLE_TICKS
         let tick = 0
         const measure = (): void => {
           if (disposed || model !== loaded) { detachArtMeasure?.(); return }
-          if (tick++ % ART_SAMPLE_EVERY === 0) {
+          const interval = dense > 0 ? ART_SAMPLE_EVERY : ART_WATCHDOG_EVERY
+          if (dense > 0) dense -= 1
+          if (tick++ % interval === 0) {
             const scaleNow = artScale > 0 ? artScale : baseModelW > 0 ? (pos.size - 8) / baseModelW : 0
             if (sampleArtBounds(scaleNow)) applySizeNow(pos.size)
           }
-          if (--ticksLeft <= 0) detachArtMeasure?.()
         }
         detachArtMeasure?.()
         // UTILITY(-50)：位于 PIXI 渲染（LOW）之后，读到的就是本帧画面。
