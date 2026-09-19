@@ -126,12 +126,14 @@ declare const PIXI: {
   Application: new (options: Record<string, unknown>) => {
     stage: { addChild(child: unknown): unknown };
     ticker: {
-      addOnce(fn: () => void): unknown;
+      addOnce(fn: () => void, context?: unknown, priority?: number): unknown;
+      add(fn: () => void, context?: unknown, priority?: number): unknown;
+      remove(fn: () => void, context?: unknown): unknown;
       start(): unknown;
       stop(): unknown;
       maxFPS?: number;
     };
-    renderer: { resize(width: number, height: number): unknown };
+    renderer: { resize(width: number, height: number): unknown; gl?: WebGLRenderingContext };
     destroy(remove: boolean): void;
   };
   live2d?: { Live2DModel?: {
