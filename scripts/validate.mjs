@@ -12,6 +12,7 @@ const requiredPermissions = [
   "ui:command",
   "session.lifecycle.read",
   "runtime.events.read",
+  "events",
   "assets:bundle",
   "assets:directory",
   "network:cdn.jsdelivr.net",

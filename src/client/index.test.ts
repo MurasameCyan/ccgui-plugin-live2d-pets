@@ -94,17 +94,25 @@ async function mountPet(options: {
     }
   };
   // WebGL 回读只在本帧渲染之后才有内容：渲染前读到的是全透明缓冲。
+  // 记录的调用顺序用于断言「resize 后同帧重绘」。
+  const calls: string[] = [];
+  let canvasEl: HTMLCanvasElement | null = null;
   const glMock = options.art && {
     RGBA: 6408,
     UNSIGNED_BYTE: 5121,
-    readPixels: (_x: number, _y: number, w: number, h: number, _format: number, _type: number, pixels: Uint8Array) => {
-      if (!rendered) return;
+    readPixels: (rx: number, ry: number, w: number, h: number, _format: number, _type: number, pixels: Uint8Array) => {
+      if (!rendered || !canvasEl) return;
       const art = options.art!;
+      const canvasHeight = canvasEl.height;
       for (let y = 0; y < h; y += 1) {
         // GL 原点在左下，换算成画布坐标。
-        const canvasY = h - 1 - y;
+        const canvasY = canvasHeight - 1 - (ry + y);
         if (canvasY < art.y0 || canvasY > art.y1) continue;
-        for (let x = art.x0; x <= art.x1; x += 1) pixels[(y * w + x) * 4 + 3] = 255;
+        for (let x = 0; x < w; x += 1) {
+          const canvasX = rx + x;
+          if (canvasX < art.x0 || canvasX > art.x1) continue;
+          pixels[(y * w + x) * 4 + 3] = 255;
+        }
       }
     },
   };
@@ -121,9 +129,14 @@ async function mountPet(options: {
     Application: class {
       stage = { addChild: vi.fn() };
       ticker = ticker;
-      renderer = { resize: vi.fn(), gl: glMock };
+      renderer = {
+        resize: vi.fn((width: number, height: number) => { calls.push(`resize:${width}x${height}`); }),
+        gl: glMock,
+      };
+      render = vi.fn(() => { calls.push("render"); });
       destroy = destroy;
-      constructor() {
+      constructor(options?: { view?: HTMLCanvasElement }) {
+        if (options?.view) canvasEl = options.view;
         tickerRunning = true;
         // Application 自己的渲染回调：优先级 LOW(-25)。
         listeners.push({ fn: () => { rendered = true; }, priority: -25, once: false });
@@ -160,7 +173,19 @@ async function mountPet(options: {
   cleanups.push(unmount);
   await act(async () => { root.render(React.createElement(Overlay)); });
   const anchor = container.firstElementChild as HTMLDivElement;
-  return { ...harness, runtime, anchor, scripts, ticker, frame, loadModel, destroy, unmount, isTicking: () => tickerRunning };
+  const canvas = anchor.querySelector("canvas") as HTMLCanvasElement | null;
+  if (canvas) {
+    // jsdom 不布局：把画布矩形折算成位图尺寸，指针命中探测才能换算坐标。
+    canvas.getBoundingClientRect = () => ({
+      x: 0, y: 0, left: 0, top: 0, right: canvas.width, bottom: canvas.height,
+      width: canvas.width, height: canvas.height, toJSON: () => ({}),
+    }) as DOMRect;
+  }
+  return {
+    ...harness, runtime, anchor, scripts, ticker, frame, loadModel, destroy, unmount, calls,
+    isTicking: () => tickerRunning,
+    modelCanvas: () => anchor.querySelector("canvas") as HTMLCanvasElement | null,
+  };
 }
 
 function pointer(target: HTMLCanvasElement, type: string, x: number, y: number) {
@@ -462,6 +487,84 @@ describe("pet overlay display lifecycle", () => {
     expect(anchor.style.bottom).toBe("20px");
     pointer(replacement, "pointermove", 40, 30);
     expect(anchor.style.right).toBe("24px");
+  });
+
+  it("repaints immediately when a size change resizes the canvas", async () => {
+    const { runtime, calls, frame } = await mountPet();
+    await act(async () => { frame(); });
+    calls.length = 0;
+    let raf: FrameRequestCallback | null = null;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => { raf = callback; return 1; });
+
+    await act(async () => {
+      await runtime.setSettings([{ op: "set", path: ["size"], value: 300 }]);
+      raf?.(0);
+    });
+
+    // 画布重设会清空位图：同一帧内必须重绘，否则拖动尺寸时会出现空白帧。
+    const resizeAt = calls.findIndex((entry) => entry.startsWith("resize:"));
+    const renderAt = calls.indexOf("render", resizeAt + 1);
+    expect(resizeAt).toBeGreaterThanOrEqual(0);
+    expect(renderAt).toBeGreaterThan(resizeAt);
+  });
+
+  it("caps the rendered size so the whole model stays inside the viewport", async () => {
+    // 40x300 的高瘦绘制区域：按可见宽度 400 渲染会远超视口高度。
+    const art = { x0: 100, x1: 139, y0: 100, y1: 399 };
+    const { anchor, frame } = await mountPet({ art, config: { size: 400 } });
+    await act(async () => { frame(); });
+
+    const canvas = anchor.querySelector("canvas")!;
+    expect(canvas.height).toBeLessThanOrEqual(window.innerHeight - 16);
+    expect(canvas.width).toBeLessThan(400);
+    expect(canvas.width).toBeGreaterThan(40);
+  });
+
+  it("keeps sampling the drawn area and regrows the canvas when a later pose expands it", async () => {
+    const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
+    const { anchor, frame } = await mountPet({ art });
+    await act(async () => { frame(); });
+    const canvas = anchor.querySelector("canvas")!;
+    const fitted = canvas.height;
+    expect(fitted).toBe(588);
+
+    // 动作把绘制区域撑到画布边缘：必须重新适配，而不是继续按旧区域裁切。
+    art.x0 = 0; art.x1 = 239; art.y0 = 0; art.y1 = 587;
+    await act(async () => { frame(); });
+    await act(async () => { frame(); });
+
+    expect(canvas.height).not.toBe(fitted);
+    expect(canvas.width).toBe(240);
+  });
+
+  it("expands the canvas when the drawn area reaches a canvas edge", async () => {
+    // 顶部贴边的绘制区域说明测量被画布截断，需要外扩后重新适配。
+    const art = { x0: 100, x1: 139, y0: 0, y1: 99 };
+    const { anchor, frame } = await mountPet({ art });
+    await act(async () => { frame(); });
+
+    const canvas = anchor.querySelector("canvas")!;
+    expect(canvas.height).toBeGreaterThan(600);
+    expect(canvas.width).toBe(240);
+  });
+
+  it("lets pointer input through where the model has no pixels", async () => {
+    const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
+    const { frame, modelCanvas } = await mountPet({ art });
+    await act(async () => { frame(); });
+
+    const canvas = modelCanvas()!;
+    expect(canvas.style.pointerEvents).toBe("auto");
+
+    // 无像素处：画布改为不拦截指针，点击落到下方宿主组件。
+    canvas.dispatchEvent(new MouseEvent("pointermove", { clientX: 10, clientY: 10, bubbles: true }));
+    await act(async () => { frame(); });
+    expect(canvas.style.pointerEvents).toBe("none");
+
+    // 有像素处：恢复拦截，桌宠仍可点击/拖动。
+    canvas.dispatchEvent(new MouseEvent("pointermove", { clientX: 120, clientY: 250, bubbles: true }));
+    await act(async () => { frame(); });
+    expect(canvas.style.pointerEvents).toBe("auto");
   });
 
   it("pauses the model's shared-ticker subscription as well as application rendering", async () => {

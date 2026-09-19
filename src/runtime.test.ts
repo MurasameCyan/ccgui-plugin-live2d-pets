@@ -173,6 +173,49 @@ describe("PetRuntime", () => {
     }
   });
 
+  it("keeps mirroring a turn after switching to another session and back", async () => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      const hooks = harness.getTurnHooks()!;
+      hooks.onTurnStarted?.(turnEvent());
+      expect(runtime.snapshot().state).toBe("thinking");
+
+      // 切到另一个会话：桌宠不再表现旧会话的回合，但该回合仍在继续跟踪。
+      harness.emit("session://activated", { engine: "codex", sessionId: "other-session" });
+      expect(runtime.snapshot().state).toBe("idle");
+      hooks.onRuntimeEvent?.(runtimeEvent("permission-requested"));
+      expect(runtime.snapshot().state).toBe("idle");
+
+      // 切回原会话：仍在运行的回合立刻恢复表现，不再永久丢失反馈。
+      harness.emit("session://activated", { engine: "codex", sessionId: "session-1" });
+      expect(runtime.snapshot().state).toBe("waiting");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("keeps a background session's turn from driving the pet while another session is active", async () => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      harness.emit("session://activated", { engine: "codex", sessionId: "session-1" });
+      expect(runtime.snapshot().state).toBe("idle");
+
+      // 后台会话开始回合：记录在案，但不改变当前会话的表现。
+      harness.getTurnHooks()?.onTurnStarted?.({ ...turnEvent(), sessionId: "session-2", turnId: "turn-2" });
+      expect(runtime.snapshot().state).toBe("idle");
+
+      // 切到该会话才表现它的回合。
+      harness.emit("session://activated", { engine: "codex", sessionId: "session-2" });
+      expect(runtime.snapshot().state).toBe("thinking");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
   it.each([
     { sessionId: "other-session" },
     { engine: "claude" },

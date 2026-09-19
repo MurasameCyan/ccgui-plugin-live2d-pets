@@ -1,11 +1,9 @@
 import type {
   AfterTurnEvent,
   AssetDirectoryGrant,
-  BeforeTurnEvent,
   Disposer,
   NormalizedRuntimeEvent,
   PluginContext,
-  SessionCreatedEvent,
   SessionHooks,
   TurnHooks,
 } from "./sdk";
@@ -68,6 +66,23 @@ const PERSONAS_FILE = "personas.jsonc";
 const CUSTOM_MODELS_FILE = "custom-models.jsonc";
 const DISPLAY_KEY = "display";
 const CONFIG_KEY = "config";
+/** 宿主激活会话话题（SDK 0.3.8）：`{ engine, sessionId }`；pending 标签页 sessionId 为 null。 */
+const SESSION_ACTIVATED_TOPIC = "session://activated";
+/** 同时跟踪的会话回合上限：切走再切回仍能恢复表现，超出按最旧淘汰。 */
+const MAX_TRACKED_TURNS = 8;
+
+/** 活跃会话引用；`sessionId` 为 null 表示宿主尚未返回 native ID 的 pending 标签页。 */
+interface SessionRef { engine: string; sessionId: string | null; workspacePath?: string }
+/** 单会话的回合跟踪记录。 */
+interface TrackedTurn {
+  engine: string;
+  sessionId: string | null;
+  workspacePath: string;
+  /** 跟踪中的回合；到达终态后置空，避免迟到事件复活已结束的回合。 */
+  turnId: string | null;
+  state: PetState;
+  timer?: ReturnType<typeof setTimeout>;
+}
 
 type Listener = (view: PetStateView) => void;
 
@@ -97,9 +112,6 @@ function normalizeConfig(value: unknown): PetConfig {
 function isTerminal(event: AfterTurnEvent): boolean {
   return event.status === "completed" || event.status === "cancelled" || event.status === "failed";
 }
-function sameSession(a: SessionCreatedEvent, b: SessionCreatedEvent): boolean {
-  return a.engine === b.engine && a.sessionId === b.sessionId && a.workspace.path === b.workspace.path;
-}
 function normalizeRelativePath(value: string): string {
   return value.trim().replaceAll("\\", "/").replace(/^\/+/, "");
 }
@@ -113,8 +125,9 @@ export class PetRuntime {
   private display: PetDisplay = { ...DEFAULT_DISPLAY };
   private state: PetState = "idle";
   private agent = "idle";
-  private activeTurn: BeforeTurnEvent | undefined;
-  private doneTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 当前激活会话：只有它的回合驱动桌宠表现（spec §3）。 */
+  private activeSession: SessionRef | null = null;
+  private readonly turns: TrackedTurn[] = [];
   private version = 0;
   private readyState = false;
   private readonly listeners = new Set<Listener>();
@@ -132,36 +145,48 @@ export class PetRuntime {
     this.ready = this.initialize();
     const sessionHooks: SessionHooks = {
       onCreated: (event) => {
-        const turn = this.activeTurn;
-        if (!turn) { this.setState("idle"); return; }
-        // A new session's native ID arrives after onTurnStarted. Adopt it
-        // without interrupting that turn or another session's active work.
-        if (turn.sessionId === null && turn.engine === event.engine && turn.workspace.path === event.workspace.path) {
-          this.activeTurn = { ...turn, sessionId: event.sessionId };
+        // 首轮开始后宿主才返回 native ID：只补齐会话身份，不打断当前表现。
+        const pending = this.findTurn({ engine: event.engine, sessionId: null, workspacePath: event.workspace.path });
+        if (pending && !pending.sessionId) pending.sessionId = event.sessionId;
+        const active = this.activeSession;
+        if (active && !active.sessionId && active.engine === event.engine && (active.workspacePath ?? "") === event.workspace.path) {
+          active.sessionId = event.sessionId;
         }
+        this.refresh();
       },
       onRestored: (event) => {
-        if (this.activeTurn && sameSession(this.activeTurn, event)) return;
-        this.activeTurn = undefined;
-        this.setState("idle");
+        // 恢复/切换会话只改变「表现哪一个会话」，被切走的回合继续在后台跟踪。
+        this.activeSession = { engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspace.path };
+        this.refresh();
       },
       onClosed: (event) => {
-        if (this.activeTurn && !sameSession(this.activeTurn, event)) return;
-        this.activeTurn = undefined;
-        this.setState("idle");
+        const ref: SessionRef = { engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspace.path };
+        const turn = this.findTurn(ref);
+        if (turn) this.dropTurn(turn);
+        const active = this.activeSession;
+        if (active && this.matchesSession(active, ref)) this.activeSession = null;
+        this.refresh();
       },
     };
     const turnHooks: TurnHooks = {
       onTurnStarted: (event) => {
-        this.activeTurn = event;
-        this.agent = event.engine;
-        this.setState("thinking");
+        const ref: SessionRef = { engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspace.path };
+        // 宿主未报告激活会话时跟随本回合；后台会话的回合只记录，不改当前表现。
+        const active = this.activeSession;
+        if (!active || this.matchesSession(active, ref)) {
+          this.activeSession = ref;
+          this.agent = event.engine;
+        }
+        this.upsertTurn(ref, event.turnId, "thinking");
+        this.refresh();
       },
       onRuntimeEvent: (event) => this.onRuntimeEvent(event),
       afterTurn: (event) => this.afterTurn(event),
     };
     this.disposers.push(ctx.hooks.registerSessionHooks(sessionHooks));
     this.disposers.push(ctx.hooks.registerTurnHooks(turnHooks));
+    // 宿主唯一的「激活会话变化」信号：切标签页/切会话/新建会话都会发射。
+    this.disposers.push(ctx.events.on(SESSION_ACTIVATED_TOPIC, (data) => this.onSessionActivated(data)));
   }
 
   private async initialize(): Promise<void> {
@@ -178,37 +203,119 @@ export class PetRuntime {
     this.emit();
   }
 
-  private setState(next: PetState): void {
-    if (this.doneTimer !== undefined) {
-      clearTimeout(this.doneTimer);
-      this.doneTimer = undefined;
+  /** 会话匹配：两端都有 native ID 时按 ID + 引擎（双方都带工作区时还要一致）；
+   *  pending 侧按引擎 + 工作区匹配。 */
+  private matchesSession(
+    candidate: { engine: string; sessionId: string | null; workspacePath?: string },
+    ref: { engine: string; sessionId: string | null; workspacePath?: string },
+  ): boolean {
+    if (candidate.engine !== ref.engine) return false;
+    if (candidate.sessionId && ref.sessionId) {
+      if (candidate.sessionId !== ref.sessionId) return false;
+      const left = candidate.workspacePath;
+      const right = ref.workspacePath;
+      return !left || !right || left === right;
     }
-    if (this.state === next) return;
+    const path = ref.workspacePath ?? candidate.workspacePath;
+    return !!path && candidate.workspacePath === path;
+  }
+
+  private findTurn(ref: SessionRef): TrackedTurn | undefined {
+    return this.turns.find((turn) => this.matchesSession(turn, ref));
+  }
+
+  private upsertTurn(ref: SessionRef, turnId: string, state: PetState): TrackedTurn {
+    const existing = this.findTurn(ref);
+    if (existing) {
+      this.clearTurnTimer(existing);
+      existing.turnId = turnId;
+      existing.state = state;
+      if (!existing.sessionId && ref.sessionId) existing.sessionId = ref.sessionId;
+      return existing;
+    }
+    const turn: TrackedTurn = {
+      engine: ref.engine,
+      sessionId: ref.sessionId,
+      workspacePath: ref.workspacePath ?? "",
+      turnId,
+      state,
+    };
+    this.turns.push(turn);
+    while (this.turns.length > MAX_TRACKED_TURNS) {
+      const dropped = this.turns.shift();
+      if (dropped) this.clearTurnTimer(dropped);
+    }
+    return turn;
+  }
+
+  private dropTurn(turn: TrackedTurn): void {
+    this.clearTurnTimer(turn);
+    const index = this.turns.indexOf(turn);
+    if (index >= 0) this.turns.splice(index, 1);
+  }
+
+  private clearTurnTimer(turn: TrackedTurn): void {
+    if (turn.timer !== undefined) {
+      clearTimeout(turn.timer);
+      turn.timer = undefined;
+    }
+  }
+
+  /** 当前表现 = 激活会话的跟踪回合状态；没有跟踪回合即 idle（spec §3）。 */
+  private presentedState(): PetState {
+    const active = this.activeSession;
+    if (!active) return "idle";
+    return this.findTurn(active)?.state ?? "idle";
+  }
+
+  private refresh(): void {
+    const next = this.presentedState();
+    if (next === this.state) return;
     this.state = next;
     this.version += 1;
     this.emit();
   }
-  private setDone(): void {
-    this.setState("done");
-    this.doneTimer = setTimeout(() => {
-      this.doneTimer = undefined;
-      this.activeTurn = undefined;
-      this.setState("idle");
-    }, DONE_HOLD_MS);
+
+  private onSessionActivated(data: unknown): void {
+    const payload = recordOf(data);
+    const engine = typeof payload.engine === "string" && payload.engine ? payload.engine : null;
+    const sessionId = typeof payload.sessionId === "string" && payload.sessionId ? payload.sessionId : null;
+    // pending 标签页与「无标签页」都不对应任何跟踪中的回合 → 表现 idle。
+    this.activeSession = engine && sessionId ? { engine, sessionId } : null;
+    this.refresh();
   }
+
+  /** 完成态保持 DONE_HOLD_MS 后释放该会话的回合；新回合会立即取消保持计时。 */
+  private holdDone(turn: TrackedTurn): void {
+    this.clearTurnTimer(turn);
+    turn.state = "done";
+    turn.timer = setTimeout(() => {
+      turn.timer = undefined;
+      this.dropTurn(turn);
+      this.refresh();
+    }, DONE_HOLD_MS);
+    this.refresh();
+  }
+
   private onRuntimeEvent(event: NormalizedRuntimeEvent): void {
-    if (!this.activeTurn || event.turnId !== this.activeTurn.turnId) return;
-    if (event.kind === "permission-requested") this.setState("waiting");
-    else if (event.kind === "assistant-completed") this.setDone();
-    else if (event.kind === "turn-cancelled") { this.activeTurn = undefined; this.setState("idle"); }
-    else if (event.kind === "turn-failed") { this.activeTurn = undefined; this.setState("error"); }
-    else if (event.kind === "runtime-exited" && this.state !== "done") { this.activeTurn = undefined; this.setState("idle"); }
+    const turn = this.findTurn({ engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspacePath });
+    if (!turn || !turn.turnId || turn.turnId !== event.turnId) return;
+    if (event.kind === "permission-requested") turn.state = "waiting";
+    else if (event.kind === "assistant-completed") { this.holdDone(turn); return; }
+    else if (event.kind === "turn-cancelled") this.dropTurn(turn);
+    else if (event.kind === "turn-failed") { turn.state = "error"; turn.turnId = null; }
+    else if (event.kind === "runtime-exited" && turn.state !== "done") this.dropTurn(turn);
+    else return;
+    this.refresh();
   }
   private afterTurn(event: AfterTurnEvent): void {
-    if (!isTerminal(event) || !this.activeTurn || event.turnId !== this.activeTurn.turnId) return;
-    if (event.status === "completed") this.setDone();
-    else if (event.status === "failed") { this.activeTurn = undefined; this.setState("error"); }
-    else { this.activeTurn = undefined; this.setState("idle"); }
+    if (!isTerminal(event)) return;
+    const turn = this.findTurn({ engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspace.path });
+    if (!turn || !turn.turnId || turn.turnId !== event.turnId) return;
+    if (event.status === "completed") { this.holdDone(turn); return; }
+    if (event.status === "failed") { turn.state = "error"; turn.turnId = null; }
+    else this.dropTurn(turn);
+    this.refresh();
   }
   private emit(): void {
     const view = this.snapshot();
@@ -403,8 +510,8 @@ export class PetRuntime {
   }
   async documentLocation(): Promise<string> { await this.ready; return this.documentRoot; }
   dispose(): void {
-    clearTimeout(this.doneTimer);
-    this.doneTimer = undefined;
+    for (const turn of this.turns) this.clearTurnTimer(turn);
+    this.turns.length = 0;
     for (const dispose of this.disposers.splice(0).reverse()) dispose();
     this.listeners.clear();
   }

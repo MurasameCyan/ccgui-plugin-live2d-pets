@@ -79,11 +79,21 @@ const BUBBLE_DISPLAY_MS = 2500
 const DEFAULT_MAX_FPS = 30
 /**
  * PIXI.UPDATE_PRIORITY.UTILITY(-50)：排在 Application 的 render(LOW=-25) 之后。
- * 绘制区域测量必须读“已渲染”的帧缓冲，NORMAL(0) 会在渲染前跑，读到空帧。
+ * 绘制区域测量与指针命中探测都必须读“已渲染”的帧缓冲，NORMAL(0) 会读到空帧。
  */
 const TICKER_PRIORITY_UTILITY = -50
-/** 绘制区域测量的最多重试帧数：贴图可能晚于首帧到位。 */
-const ART_MEASURE_FRAMES = 30
+/** 绘制区域采样窗口：加载后继续采样这么多 ticker 帧，覆盖待机动作的摆动极值。 */
+const ART_SAMPLE_TICKS = 300
+/** 采样间隔（每 N 帧读一次帧缓冲）：15Hz 足够覆盖动作，读回开销可控。 */
+const ART_SAMPLE_EVERY = 2
+/** 采样包围盒贴到画布边缘时的外扩量（画布像素）：说明测量被画布截断。 */
+const ART_EDGE_MARGIN_PX = 12
+/** 共用 alpha 阈值：>16 视为可见（绘制区域测量与指针命中判定一致）。 */
+const ALPHA_VISIBLE = 16
+/** 指针命中探测半径（画布像素）：读指针附近的小块即可判定是否命中模型。 */
+const HIT_PROBE_RADIUS = 6
+/** 桌宠画布与视口的内边距：整只桌宠必须留在视口内（spec §4）。 */
+const VIEWPORT_MARGIN = 16
 
 /** pixi-live2d-display MotionPriority（对应库内枚举：NONE=0, IDLE=1, NORMAL=2, FORCE=3）。 */
 const MotionPriority = {
@@ -134,6 +144,7 @@ declare const PIXI: {
       maxFPS?: number;
     };
     renderer: { resize(width: number, height: number): unknown; gl?: WebGLRenderingContext };
+    render(): void;
     destroy(remove: boolean): void;
   };
   live2d?: { Live2DModel?: {
@@ -303,6 +314,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       maxFPS?: number
     }
     renderer: { resize(width: number, height: number): unknown; gl?: WebGLRenderingContext }
+    render?: () => void
   } | null = null
   let model: ModelLike | null = null
   let hitAreas: string[] = []
@@ -316,8 +328,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // 实测绘制区域（画布像素除以 scale 归一）：模型盒常远宽于实际绘制区域
   // （Hiyori 实测仅占盒宽 35%），据其收紧画布后桌宠才能贴边（spec §4）。
   let artMetrics: { w: number; h: number; cx: number; cy: number } | null = null
+  /** 最近一次适配使用的 scale：读取帧缓冲时把画布像素换算回模型单位。 */
+  let artScale = 0
   /** 摘除跨帧绘制区域测量（模型切换/卸载时必须停掉，否则 ticker 一直重试）。 */
   let detachArtMeasure: (() => void) | null = null
+  /** 摘除指针命中探测（随渲染层一起销毁）。 */
+  let detachHitProbe: (() => void) | null = null
+  /** 待探测的指针位置（画布像素）：指针移动时记录，渲染后读取该处 alpha。 */
+  let pendingHitProbe: { x: number; y: number } | null = null
   // 尺寸变更合并：连续设置更新只落地最后一档，避免串行 WebGL resize。
   let pendingSize: number | null = null
   let sizeRaf = 0
@@ -615,51 +633,50 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     fallbackShown = false
   }
 
-  /** 按“size = 画布宽度”的规则计算画布尺寸：
-   * 模型宽度撑满 size（留 8px 边距），高度按模型原始宽高比自适应。 */
-  function modelCanvasSize(baseW: number, baseH: number, size: number): { width: number; height: number } {
-    if (!(baseW > 0 && baseH > 0)) return { width: size, height: Math.round(size * 1.2) }
-    const scale = (size - 8) / baseW
-    return { width: size, height: Math.max(1, Math.round(baseH * scale + 8)) }
+  /** 绘制区域或模型盒的宽高比（无实测区域时退回模型盒）。 */
+  function artRatio(): { w: number; h: number } {
+    return artMetrics ? { w: artMetrics.w, h: artMetrics.h } : { w: baseModelW, h: baseModelH }
   }
 
-  /** 画布尺寸：有实测绘制区域时按绘制区域贴合（画布不再含大片透明空白），
-   * 否则退回模型盒宽高比。 */
+  /** 请求尺寸 → 实际渲染尺寸：桌宠整只可见（spec §4）。
+   * 高度 = artH * (size - 8) / artW + 8 ≤ 视口高 - 边距，超出的模型自动缩小。 */
+  function renderedSizeFor(requested: number): number {
+    const { w: ratioW, h: ratioH } = artRatio()
+    let size = Math.min(requested, Math.max(40, window.innerWidth - VIEWPORT_MARGIN))
+    if (ratioW > 0 && ratioH > 0) {
+      const maxHeight = Math.max(80, window.innerHeight - VIEWPORT_MARGIN)
+      size = Math.min(size, 8 + ((maxHeight - 8) * ratioW) / ratioH)
+    }
+    return Math.max(16, Math.floor(size))
+  }
+
+  /** 画布尺寸：size = 可见宽度（有实测绘制区域时贴合绘制区域，否则按模型盒宽高比）。 */
   function canvasSizeFor(size: number): { width: number; height: number } {
-    if (artMetrics) {
-      const s = (size - 8) / artMetrics.w
-      return { width: size, height: Math.max(1, Math.round(artMetrics.h * s) + 8) }
-    }
-    return modelCanvasSize(baseModelW, baseModelH, size)
+    const { w: ratioW, h: ratioH } = artRatio()
+    if (!(ratioW > 0 && ratioH > 0)) return { width: size, height: Math.round(size * 1.2) }
+    const scale = (size - 8) / ratioW
+    return { width: size, height: Math.max(1, Math.round(ratioH * scale) + 8) }
   }
 
-  /** 按当前尺寸重新适配模型（画布已就绪时调用；基准尺寸为 scale=1 时捕获值）。
-   * 有实测绘制区域时按绘制区域定 scale 与位置，画布右/下边缘即桌宠边缘。 */
-  function fitModel(size: number): void {
+  /** 按当前尺寸重新适配模型（画布已就绪时调用；基准尺寸为 scale=1 时捕获值）。 */
+  function fitModel(): void {
     if (!model || !canvas) return
+    const size = renderedSizeFor(pos.size)
+    const { w: ratioW, h: ratioH } = artRatio()
+    if (!(ratioW > 0 && ratioH > 0)) return
+    const scale = (size - 8) / ratioW
+    artScale = scale
+    model.scale.set(scale)
+    model.anchor.set(0.5, 0.5)
     if (artMetrics) {
-      const s = (size - 8) / artMetrics.w
-      model.scale.set(s)
-      model.anchor.set(0.5, 0.5)
-      model.position.set(canvas.width / 2 - artMetrics.cx * s, canvas.height / 2 - artMetrics.cy * s)
-      return
-    }
-    const w = baseModelW
-    const h = baseModelH
-    if (w > 0 && h > 0) {
-      const s = (size - 8) / w
-      model.scale.set(s)
-      model.anchor.set(0.5, 0.5)
+      model.position.set(canvas.width / 2 - artMetrics.cx * scale, canvas.height / 2 - artMetrics.cy * scale)
+    } else {
       model.position.set(canvas.width / 2, canvas.height / 2)
     }
   }
 
-  /**
-   * 读取首帧帧缓冲量出实际绘制区域（画布像素）：模型盒可能远宽于绘制区域
-   * （Hiyori 实测仅占盒宽 35%），空白会在贴边时表现为“无法靠边”。
-   * 只执行一次/模型；失败时保持按模型盒的旧行为。
-   */
-  function measureArtBounds(scale: number): boolean {
+  /** 采样一帧帧缓冲并并入绘制区域（并集，只增不减）；返回 true 表示需要按新区域重排。 */
+  function sampleArtBounds(scale: number): boolean {
     const gl = app?.renderer?.gl
     if (!gl || typeof gl.readPixels !== 'function' || !canvas) return false
     const w = canvas.width
@@ -680,7 +697,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       // readPixels 原点在左下，换算成画布坐标
       const canvasY = h - 1 - y
       for (let x = 0; x < w; x += 1) {
-        if (pixels[row + x * 4 + 3] > 16) {
+        if (pixels[row + x * 4 + 3] > ALPHA_VISIBLE) {
           if (x < minX) minX = x
           if (x > maxX) maxX = x
           if (canvasY < minY) minY = canvasY
@@ -688,16 +705,66 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         }
       }
     }
-    const artW = maxX - minX + 1
-    const artH = maxY - minY + 1
+    if (maxX < 0 || maxY < 0) return false
+    // 贴边的包围盒说明这一帧的绘制区域被画布截断：外扩，避免继续裁切（spec §4）。
+    let x0 = minX
+    let x1 = maxX
+    let y0 = minY
+    let y1 = maxY
+    if (minX <= 1) x0 -= ART_EDGE_MARGIN_PX
+    if (maxX >= w - 2) x1 += ART_EDGE_MARGIN_PX
+    if (minY <= 1) y0 -= ART_EDGE_MARGIN_PX
+    if (maxY >= h - 2) y1 += ART_EDGE_MARGIN_PX
+    const artW = x1 - x0 + 1
+    const artH = y1 - y0 + 1
     if (artW < 8 || artH < 8) return false
-    artMetrics = {
+    const sample = {
       w: artW / scale,
       h: artH / scale,
-      cx: ((minX + maxX + 1) / 2 - w / 2) / scale,
-      cy: ((minY + maxY + 1) / 2 - h / 2) / scale,
+      cx: ((x0 + x1 + 1) / 2 - w / 2) / scale,
+      cy: ((y0 + y1 + 1) / 2 - h / 2) / scale,
     }
-    return true
+    if (!artMetrics) {
+      artMetrics = sample
+      return true
+    }
+    const merged = {
+      w: Math.max(artMetrics.w, sample.w),
+      h: Math.max(artMetrics.h, sample.h),
+      cx: sample.cx,
+      cy: sample.cy,
+    }
+    const grew = merged.w > artMetrics.w + 0.5 || merged.h > artMetrics.h + 0.5
+    artMetrics = merged
+    return grew
+  }
+
+  /** 指针命中探测：渲染后读指针附近一小块帧缓冲，据此决定画布是否拦截指针。
+   * 透明处放行（点击落到下方宿主组件），有像素处拦截（桌宠仍可点击/拖动，spec §4）。 */
+  function probePointerHit(): void {
+    const probe = pendingHitProbe
+    if (!probe || !canvas) return
+    if (dragging) return
+    pendingHitProbe = null
+    const gl = app?.renderer?.gl
+    if (!gl || typeof gl.readPixels !== 'function') return
+    const x = Math.max(0, Math.min(canvas.width - 1, Math.floor(probe.x) - HIT_PROBE_RADIUS))
+    const y = Math.max(0, Math.min(canvas.height - 1, Math.floor(probe.y) - HIT_PROBE_RADIUS))
+    const w = Math.min(HIT_PROBE_RADIUS * 2 + 1, canvas.width - x)
+    const h = Math.min(HIT_PROBE_RADIUS * 2 + 1, canvas.height - y)
+    if (!(w > 0 && h > 0)) return
+    const pixels = new Uint8Array(w * h * 4)
+    try {
+      gl.readPixels(x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+    } catch {
+      return
+    }
+    // readPixels 原点在左下：探测点换算到 GL 坐标后包含在读取块内。
+    let hit = false
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] > ALPHA_VISIBLE) { hit = true; break }
+    }
+    canvas.style.pointerEvents = hit ? 'auto' : 'none'
   }
 
   /** 桌宠盒当前屏幕尺寸（画布位图尺寸优先；无画布时为降级爪印/尺寸档）。 */
@@ -727,27 +794,27 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     box.style.bottom = `${pos.bottom}px`
   }
 
-  /** 立即应用画布尺寸（size 视为 canvas 宽度，高度按模型比例自适应）。 */
+  /** 立即应用画布尺寸（size 视为可见宽度，受视口限制，spec §4）。 */
   function applySizeNow(nextSize: number): void {
-    if (canvas && app) {
-      const canvasSize = canvasSizeFor(nextSize)
-      canvas.width = canvasSize.width
-      canvas.height = canvasSize.height
-      try { app.renderer.resize(canvasSize.width, canvasSize.height) } catch { /* 旧渲染器 */ }
-      if (zoneOverlay) {
-        zoneOverlay.width = canvasSize.width
-        zoneOverlay.height = canvasSize.height
-        zoneOverlay.style.width = `${canvasSize.width}px`
-        zoneOverlay.style.height = `${canvasSize.height}px`
-      }
-      pos.size = nextSize
-      syncDebugPanelWidth()
-      if (model) fitModel(nextSize)
-      // 画布尺寸变化会改变可停靠范围：重新钳制位置。
-      applyPosition()
-    } else {
-      pos.size = nextSize
+    pos.size = nextSize
+    if (!canvas || !app) return
+    const renderSize = renderedSizeFor(nextSize)
+    const canvasSize = canvasSizeFor(renderSize)
+    canvas.width = canvasSize.width
+    canvas.height = canvasSize.height
+    try { app.renderer.resize(canvasSize.width, canvasSize.height) } catch { /* 旧渲染器 */ }
+    if (zoneOverlay) {
+      zoneOverlay.width = canvasSize.width
+      zoneOverlay.height = canvasSize.height
+      zoneOverlay.style.width = `${canvasSize.width}px`
+      zoneOverlay.style.height = `${canvasSize.height}px`
     }
+    syncDebugPanelWidth()
+    if (model) fitModel()
+    // 画布尺寸变化会改变可停靠范围：重新钳制位置。
+    applyPosition()
+    // 重设画布会清空位图：立刻重绘，否则拖动尺寸时合成帧是空白（抖动/闪烁）。
+    try { app.render?.() } catch { /* 旧渲染器 */ }
   }
 
   /** 合并同帧/连发的尺寸变更：只落地最后一档，避免串行 WebGL resize。 */
@@ -781,6 +848,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     detachMotionFinish = null
     // 跨帧绘制区域测量绑在旧 ticker 上：必须在销毁 app 前摘掉，否则重试回调残留。
     detachArtMeasure?.()
+    detachHitProbe?.()
+    pendingHitProbe = null
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
     stopZoneLoop()
@@ -889,8 +958,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         }
       } catch { /* 包围盒不可用则保留 loaded.width/height */ }
       hitAreas = Object.keys(loaded.internalModel?.hitAreas ?? {})
-      // 根据模型原始宽高自适应 canvas（size 视为 canvas 宽度）
-      const canvasSize = modelCanvasSize(baseModelW, baseModelH, pos.size)
+      // 根据模型原始宽高自适应 canvas（size 视为可见宽度，受视口限制）
+      const canvasSize = canvasSizeFor(renderedSizeFor(pos.size))
       canvas.width = canvasSize.width
       canvas.height = canvasSize.height
       try { app.renderer.resize(canvasSize.width, canvasSize.height) } catch { /* 旧渲染器 */ }
@@ -909,22 +978,20 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         detachMotionFinish = () => motionManager.off?.('motionFinish', handleMotionFinish)
       }
       refreshDebugMotionGroups()
-      fitModel(pos.size)
-      // 绘制区域测量必须排在渲染之后：PIXI 把 render 挂在 LOW(-25)，
+      fitModel()
+      // 绘制区域采样必须排在渲染之后：PIXI 把 render 挂在 LOW(-25)，
       // 用默认 NORMAL(0) 的回调会在首帧渲染前读到空帧缓冲（实测 alpha 全 0）。
-      // 贴图可能晚于首帧到位，因此跨帧重试直到量出结果或帧数用尽。
+      // 采样窗口覆盖待机动作的摆动极值：单帧包围盒会比后续姿态小，直接锁死会裁切模型。
       try {
-        let framesLeft = ART_MEASURE_FRAMES
+        let ticksLeft = ART_SAMPLE_TICKS
+        let tick = 0
         const measure = (): void => {
           if (disposed || model !== loaded) { detachArtMeasure?.(); return }
-          if (!(baseModelW > 0 && baseModelH > 0)) fitModel(pos.size)
-          const scaleNow = baseModelW > 0 ? (pos.size - 8) / baseModelW : 0
-          if (measureArtBounds(scaleNow)) {
-            detachArtMeasure?.()
-            applySizeNow(pos.size)
-            return
+          if (tick++ % ART_SAMPLE_EVERY === 0) {
+            const scaleNow = artScale > 0 ? artScale : baseModelW > 0 ? (pos.size - 8) / baseModelW : 0
+            if (sampleArtBounds(scaleNow)) applySizeNow(pos.size)
           }
-          if (--framesLeft <= 0) detachArtMeasure?.()
+          if (--ticksLeft <= 0) detachArtMeasure?.()
         }
         detachArtMeasure?.()
         // UTILITY(-50)：位于 PIXI 渲染（LOW）之后，读到的就是本帧画面。
@@ -934,6 +1001,15 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
           try { app?.ticker.remove(measure) } catch { /* ticker 已销毁 */ }
         }
       } catch { /* 首帧适配 */ }
+      // 指针命中探测：同样读渲染后的帧缓冲，据此决定画布是否拦截指针输入。
+      try {
+        detachHitProbe?.()
+        app.ticker.add(probePointerHit, undefined, TICKER_PRIORITY_UTILITY)
+        detachHitProbe = () => {
+          detachHitProbe = null
+          try { app?.ticker.remove(probePointerHit) } catch { /* ticker 已销毁 */ }
+        }
+      } catch { /* 命中探测不可用则保持整块拦截 */ }
       if (lastState) playState(lastState)
       if (showSpatialZones) startZoneLoop()
 
@@ -1293,6 +1369,18 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // ---- 鼠标跟随（spec §4）：全局 pointermove，头/眼/身体看向鼠标 ----
   function handleGlobalPointerMove(e: PointerEvent): void {
     lastPointerClient = { x: e.clientX, y: e.clientY }
+    // 指针命中探测：记录画布内位置，渲染后判定该处是否有像素（决定是否放行点击）。
+    if (canvas && !dragging) {
+      const rect = canvas.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0
+        && e.clientX >= rect.left && e.clientX <= rect.right
+        && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        // 换算到画布位图坐标（GL 原点在左下）
+        const px = ((e.clientX - rect.left) / rect.width) * canvas.width
+        const py = canvas.height - 1 - ((e.clientY - rect.top) / rect.height) * canvas.height
+        pendingHitProbe = { x: px, y: py }
+      }
+    }
     // 非 idle 动作播放期间抑制 focus，避免动作关键帧被鼠标跟随叠加（spec §4）
     if (!model || !canvas || dragging || !enabled || hidden || focusSuppressed) return
     applyFocus(e.clientX, e.clientY)
@@ -1374,8 +1462,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       bubble.style.cssText = 'position:absolute;left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:8px;padding:4px 10px;background:rgba(255,255,255,.95);color:#222;border-radius:999px;font:12px/1.5 sans-serif;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none'
       box.appendChild(bubble)
 
-      // 窗口缩放后视口边界变化：重新钳制位置，避免桌宠留在画面外（spec §4）。
-      const onViewportResize = (): void => { if (!dragging) applyPosition() }
+      // 窗口缩放后视口边界变化：重新按视口上限适配尺寸，并重新钳制位置（spec §4）。
+      const onViewportResize = (): void => {
+        if (dragging) return
+        applySizeNow(pos.size)
+        applyPosition()
+      }
       window.addEventListener('resize', onViewportResize)
       pushCleanup(() => window.removeEventListener('resize', onViewportResize))
 

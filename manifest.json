@@ -1,7 +1,7 @@
 {
   "id": "ccgui.live2d-pets",
   "name": "Live2D Pets",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.0.4",
   "sdkVersion": "^0.4.3",
   "author": "MurasameCyan",
@@ -17,6 +17,7 @@
     "ui:command",
     "session.lifecycle.read",
     "runtime.events.read",
+    "events",
     "assets:bundle",
     "assets:directory",
     "network:cdn.jsdelivr.net"

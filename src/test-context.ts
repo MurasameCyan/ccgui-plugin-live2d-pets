@@ -3,6 +3,7 @@ import type { PluginContext, SessionHooks, TurnHooks } from "./sdk";
 export function makeContext() {
   const values = new Map<string, unknown>();
   const documents = new Map<string, { content: string; version: string }>();
+  const topics = new Map<string, Set<(data: unknown) => void>>();
   let version = 0;
   let sessionHooks: SessionHooks | undefined;
   let turnHooks: TurnHooks | undefined;
@@ -54,10 +55,29 @@ export function makeContext() {
       async set(key: string, value: unknown) { values.set(key, value); },
       async delete(key: string) { values.delete(key); },
     },
-    events: { on() { return () => {}; }, emit() {} },
+    events: {
+      on(topic: string, callback: (data: unknown) => void) {
+        const set = topics.get(topic) ?? new Set();
+        set.add(callback);
+        topics.set(topic, set);
+        return () => { set.delete(callback); };
+      },
+      emit(topic: string, data: unknown) {
+        for (const callback of [...(topics.get(topic) ?? [])]) callback(data);
+      },
+    },
     host: { appVersion: "1.0.4", sdkVersion: "0.4.3", locale: "zh-CN", isWeb: false },
   } as unknown as PluginContext;
-  return { ctx, documents, getSessionHooks: () => sessionHooks, getTurnHooks: () => turnHooks };
+  return {
+    ctx,
+    documents,
+    getSessionHooks: () => sessionHooks,
+    getTurnHooks: () => turnHooks,
+    /** 宿主 → 插件话题注入（如 session://activated）。 */
+    emit(topic: string, data: unknown) {
+      for (const callback of [...(topics.get(topic) ?? [])]) callback(data);
+    },
+  };
 }
 
 export function turnEvent() {
