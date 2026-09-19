@@ -87,7 +87,7 @@ const ART_SAMPLE_TICKS = 300
 /** 密集采样间隔（每 N 帧读一次帧缓冲）。 */
 const ART_SAMPLE_EVERY = 2
 /** 采样窗口结束后的看门狗间隔（每 N 帧读一次）：迟到的动作/互动姿势仍会并入绘制区域。 */
-const ART_WATCHDOG_EVERY = 60
+const ART_WATCHDOG_EVERY = 30
 /** 采样包围盒贴到画布边缘时的外扩量（画布像素）：说明测量被画布截断。 */
 const ART_EDGE_MARGIN_PX = 12
 /** 共用 alpha 阈值：>16 视为可见（绘制区域测量与指针命中判定一致）。 */
@@ -726,19 +726,41 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       cx: ((x0 + x1 + 1) / 2 - w / 2) / scale,
       cy: ((y0 + y1 + 1) / 2 - h / 2) / scale,
     }
+    const sampleRect = {
+      x0: sample.cx - sample.w / 2,
+      x1: sample.cx + sample.w / 2,
+      y0: sample.cy - sample.h / 2,
+      y1: sample.cy + sample.h / 2,
+    }
     if (!artMetrics) {
-      artMetrics = sample
+      artMetrics = metricsFromRect(sampleRect)
       return true
     }
-    const merged = {
-      w: Math.max(artMetrics.w, sample.w),
-      h: Math.max(artMetrics.h, sample.h),
-      cx: sample.cx,
-      cy: sample.cy,
+    const current = {
+      x0: artMetrics.cx - artMetrics.w / 2,
+      x1: artMetrics.cx + artMetrics.w / 2,
+      y0: artMetrics.cy - artMetrics.h / 2,
+      y1: artMetrics.cy + artMetrics.h / 2,
     }
-    const grew = merged.w > artMetrics.w + 0.5 || merged.h > artMetrics.h + 0.5
-    artMetrics = merged
+    const union = {
+      x0: Math.min(current.x0, sampleRect.x0),
+      x1: Math.max(current.x1, sampleRect.x1),
+      y0: Math.min(current.y0, sampleRect.y0),
+      y1: Math.max(current.y1, sampleRect.y1),
+    }
+    const grew = (union.x1 - union.x0) > artMetrics.w + 0.5 || (union.y1 - union.y0) > artMetrics.h + 0.5
+    artMetrics = metricsFromRect(union)
     return grew
+  }
+
+  /** 模型单位矩形（相对模型原点）→ 画布适配用的宽高 + 中心偏移。 */
+  function metricsFromRect(rect: { x0: number; x1: number; y0: number; y1: number }): { w: number; h: number; cx: number; cy: number } {
+    return {
+      w: rect.x1 - rect.x0,
+      h: rect.y1 - rect.y0,
+      cx: (rect.x0 + rect.x1) / 2,
+      cy: (rect.y0 + rect.y1) / 2,
+    }
   }
 
   /** 指针命中探测：渲染后读指针附近一小块帧缓冲，据此决定画布是否拦截指针。
