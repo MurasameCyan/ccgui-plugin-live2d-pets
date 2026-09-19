@@ -196,6 +196,11 @@ function pointer(target: HTMLCanvasElement, type: string, x: number, y: number) 
   target.dispatchEvent(event);
 }
 
+/** 预热：隐藏画布累积绘制区域样本后才定形并显示，需要跑若干帧。 */
+async function settle(harness: { frame: () => void }, frames = 9): Promise<void> {
+  await act(async () => { for (let index = 0; index < frames; index += 1) harness.frame(); });
+}
+
 describe("pet overlay display lifecycle", () => {
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -254,22 +259,25 @@ describe("pet overlay display lifecycle", () => {
     await act(async () => { pointer(canvas, "pointerup", 1200, 1200); });
   });
 
-  it("shrinks the canvas to the drawn area measured after the frame is rendered", async () => {
+  it("fits the canvas to the drawn area after the warmup samples", async () => {
     const canvasW = 240;
     const canvasH = 472;
     const model = makeModel();
     // 绘制区域：画布坐标 x 100..139 (40px), y 200..299 (100px)。
-    const { anchor, frame } = await mountPet({ art: { x0: 100, x1: 139, y0: 200, y1: 299 }, model });
+    const harness = await mountPet({ art: { x0: 100, x1: 139, y0: 200, y1: 299 }, model });
+    const { anchor } = harness;
     const canvas = anchor.querySelector("canvas")!;
     expect(canvas.width).toBe(canvasW);
     expect(canvas.height).toBe(canvasH);
+    expect(canvas.style.visibility).toBe("hidden"); // 出现前先隐藏，避免出现后再改尺寸
 
-    await act(async () => { frame(); });
+    await settle(harness);
 
     // 尺寸语义：size = 可见宽度。绘制区域 40x100px 撑满后 canvas 约 240x588，
-    // 模型按绘制区域居中（水平居中、垂直按下缘偏移微调）。
+    // 模型钉在画布右/下边（之后扩画布不会移动它）。
     expect(canvas.width).toBe(canvasW);
     expect(canvas.height).toBe(588);
+    expect(canvas.style.visibility).toBe("");
     const [px, py] = model.position.set.mock.calls.at(-1) as [number, number];
     expect(Math.round(px)).toBe(120);
     expect(Math.round(py)).toBe(213);
@@ -520,30 +528,33 @@ describe("pet overlay display lifecycle", () => {
     expect(canvas.width).toBeGreaterThan(40);
   });
 
-  it("keeps sampling the drawn area and regrows the canvas when a later pose expands it", async () => {
+  it("grows the canvas for a later pose without ever changing the model scale", async () => {
     const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
-    const { anchor, frame } = await mountPet({ art });
-    await act(async () => { frame(); });
-    const canvas = anchor.querySelector("canvas")!;
-    const fitted = canvas.height;
-    expect(fitted).toBe(588);
+    const model = makeModel();
+    const harness = await mountPet({ art, model });
+    await settle(harness);
+    const canvas = harness.anchor.querySelector("canvas")!;
+    const fitted = { width: canvas.width, height: canvas.height };
+    expect(fitted).toEqual({ width: 240, height: 588 });
+    const scaleCalls = model.scale.set.mock.calls.length;
 
-    // 动作把绘制区域撑到画布边缘：必须重新适配，而不是继续按旧区域裁切。
+    // 动作把绘制区域撑到画布边缘：只扩画布，缩放必须保持不变（桌宠不会突然变小）。
     art.x0 = 0; art.x1 = 239; art.y0 = 0; art.y1 = 587;
-    await act(async () => { frame(); });
-    await act(async () => { frame(); });
+    await settle(harness, 40);
 
-    expect(canvas.height).not.toBe(fitted);
-    expect(canvas.width).toBe(240);
+    expect(model.scale.set.mock.calls.length).toBe(scaleCalls);
+    expect(canvas.width).toBeGreaterThanOrEqual(fitted.width);
+    expect(canvas.height).toBeGreaterThanOrEqual(fitted.height);
+    expect(canvas.width > fitted.width || canvas.height > fitted.height).toBe(true);
   });
 
   it("expands the canvas when the drawn area reaches a canvas edge", async () => {
-    // 顶部贴边的绘制区域说明测量被画布截断，需要外扩后重新适配。
+    // 顶部贴边的绘制区域说明测量被画布截断，需要外扩后重新定形。
     const art = { x0: 100, x1: 139, y0: 0, y1: 99 };
-    const { anchor, frame } = await mountPet({ art });
-    await act(async () => { frame(); });
+    const harness = await mountPet({ art });
+    await settle(harness);
 
-    const canvas = anchor.querySelector("canvas")!;
+    const canvas = harness.anchor.querySelector("canvas")!;
     expect(canvas.height).toBeGreaterThan(600);
     expect(canvas.width).toBe(240);
   });

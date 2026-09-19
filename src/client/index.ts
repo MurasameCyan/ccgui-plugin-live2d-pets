@@ -82,11 +82,13 @@ const DEFAULT_MAX_FPS = 30
  * 绘制区域测量与指针命中探测都必须读“已渲染”的帧缓冲，NORMAL(0) 会读到空帧。
  */
 const TICKER_PRIORITY_UTILITY = -50
-/** 绘制区域密集采样窗口：加载后这么多 ticker 帧内每 2 帧采样一次，覆盖起始动作摆动。 */
-const ART_SAMPLE_TICKS = 300
-/** 密集采样间隔（每 N 帧读一次帧缓冲）。 */
+/** 预热采样：出现前隐藏画布累积样本，避免桌宠出现后再改尺寸（出现即定形）。 */
+const ART_WARMUP_SAMPLES = 4
+/** 预热最长帧数：贴图或 WebGL 回读异常时桌宠也要出现。 */
+const ART_WARMUP_TICKS = 24
+/** 预热期间的采样间隔（每 N 帧读一次帧缓冲）。 */
 const ART_SAMPLE_EVERY = 2
-/** 采样窗口结束后的看门狗间隔（每 N 帧读一次）：迟到的动作/互动姿势仍会并入绘制区域。 */
+/** 预热后的看门狗间隔（每 N 帧读一次）：迟到的动作姿势只扩画布，不改缩放。 */
 const ART_WATCHDOG_EVERY = 30
 /** 采样包围盒贴到画布边缘时的外扩量（画布像素）：说明测量被画布截断。 */
 const ART_EDGE_MARGIN_PX = 12
@@ -96,6 +98,8 @@ const ALPHA_VISIBLE = 16
 const HIT_PROBE_RADIUS = 6
 /** 桌宠画布与视口的内边距：整只桌宠必须留在视口内（spec §4）。 */
 const VIEWPORT_MARGIN = 16
+/** 绘制区域与画布边缘之间的边距（每侧一半，共 8px）。 */
+const ART_PADDING = 8
 
 /** pixi-live2d-display MotionPriority（对应库内枚举：NONE=0, IDLE=1, NORMAL=2, FORCE=3）。 */
 const MotionPriority = {
@@ -327,11 +331,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // 模型基础尺寸（scale=1 时捕获一次；避免按当前 scale 累积误差）。
   let baseModelW = 0
   let baseModelH = 0
-  // 实测绘制区域（画布像素除以 scale 归一）：模型盒常远宽于实际绘制区域
-  // （Hiyori 实测仅占盒宽 35%），据其收紧画布后桌宠才能贴边（spec §4）。
-  let artMetrics: { w: number; h: number; cx: number; cy: number } | null = null
+  // 实测绘制区域：artRef 是缩放基准（预热结束时冻结，之后动作再大也不改缩放），
+  // artUnion 是覆盖范围（只增不减，只用来保证画布装得下动作）。
+  let artRef: { w: number; h: number; cx: number; cy: number } | null = null
+  let artUnion: { x0: number; x1: number; y0: number; y1: number } | null = null
   /** 最近一次适配使用的 scale：读取帧缓冲时把画布像素换算回模型单位。 */
   let artScale = 0
+  /** 模型原点在画布坐标中的位置（画布右/下锚定，扩画布时要同步平移）。 */
+  let modelOrigin = { x: 0, y: 0 }
   /** 摘除跨帧绘制区域测量（模型切换/卸载时必须停掉，否则 ticker 一直重试）。 */
   let detachArtMeasure: (() => void) | null = null
   /** 摘除指针命中探测（随渲染层一起销毁）。 */
@@ -635,49 +642,138 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     fallbackShown = false
   }
 
-  /** 绘制区域或模型盒的宽高比（无实测区域时退回模型盒）。 */
-  function artRatio(): { w: number; h: number } {
-    return artMetrics ? { w: artMetrics.w, h: artMetrics.h } : { w: baseModelW, h: baseModelH }
+  /** 模型单位矩形（相对模型原点）→ 宽高 + 中心偏移。 */
+  function metricsFromRect(rect: { x0: number; x1: number; y0: number; y1: number }): { w: number; h: number; cx: number; cy: number } {
+    return {
+      w: rect.x1 - rect.x0,
+      h: rect.y1 - rect.y0,
+      cx: (rect.x0 + rect.x1) / 2,
+      cy: (rect.y0 + rect.y1) / 2,
+    }
+  }
+
+  /** 宽高 + 中心偏移 → 模型单位矩形。 */
+  function rectFromMetrics(metrics: { w: number; h: number; cx: number; cy: number }): { x0: number; x1: number; y0: number; y1: number } {
+    return {
+      x0: metrics.cx - metrics.w / 2,
+      x1: metrics.cx + metrics.w / 2,
+      y0: metrics.cy - metrics.h / 2,
+      y1: metrics.cy + metrics.h / 2,
+    }
+  }
+
+  /** 缩放基准：预热结束时冻结的实测区域（之后动作再大也不改缩放），未测量时退回模型盒。 */
+  function artBase(): { w: number; h: number; cx: number; cy: number } | null {
+    if (artRef) return artRef
+    if (artUnion) return metricsFromRect(artUnion)
+    if (baseModelW > 0 && baseModelH > 0) return { w: baseModelW, h: baseModelH, cx: 0, cy: 0 }
+    return null
+  }
+
+  /** 覆盖范围：实测并集（只增不减）；未测量时等于基准。 */
+  function artCover(): { x0: number; x1: number; y0: number; y1: number } | null {
+    if (artUnion) return artUnion
+    const base = artBase()
+    return base ? rectFromMetrics(base) : null
   }
 
   /** 请求尺寸 → 实际渲染尺寸：桌宠整只可见（spec §4）。
-   * 高度 = artH * (size - 8) / artW + 8 ≤ 视口高 - 边距，超出的模型自动缩小。 */
+   * 画布高 = 覆盖高 * (size - 8) / 基准宽 + 8 ≤ 视口高 - 边距，超出的模型自动缩小。 */
   function renderedSizeFor(requested: number): number {
-    const { w: ratioW, h: ratioH } = artRatio()
+    const cover = artCover()
     let size = Math.min(requested, Math.max(40, window.innerWidth - VIEWPORT_MARGIN))
-    if (ratioW > 0 && ratioH > 0) {
+    const base = artBase()
+    if (cover && base && base.w > 0) {
+      const coverW = cover.x1 - cover.x0
+      const coverH = cover.y1 - cover.y0
       const maxHeight = Math.max(80, window.innerHeight - VIEWPORT_MARGIN)
-      size = Math.min(size, 8 + ((maxHeight - 8) * ratioW) / ratioH)
+      if (coverW > 0 && coverH > 0) size = Math.min(size, 8 + ((maxHeight - 8) * coverW) / coverH)
     }
     return Math.max(16, Math.floor(size))
   }
 
-  /** 画布尺寸：size = 可见宽度（有实测绘制区域时贴合绘制区域，否则按模型盒宽高比）。 */
+  /** 画布尺寸：宽度至少是尺寸档（覆盖更宽时按覆盖），高度按覆盖范围与当前缩放。 */
   function canvasSizeFor(size: number): { width: number; height: number } {
-    const { w: ratioW, h: ratioH } = artRatio()
-    if (!(ratioW > 0 && ratioH > 0)) return { width: size, height: Math.round(size * 1.2) }
-    const scale = (size - 8) / ratioW
-    return { width: size, height: Math.max(1, Math.round(ratioH * scale) + 8) }
-  }
-
-  /** 按当前尺寸重新适配模型（画布已就绪时调用；基准尺寸为 scale=1 时捕获值）。 */
-  function fitModel(): void {
-    if (!model || !canvas) return
-    const size = renderedSizeFor(pos.size)
-    const { w: ratioW, h: ratioH } = artRatio()
-    if (!(ratioW > 0 && ratioH > 0)) return
-    const scale = (size - 8) / ratioW
-    artScale = scale
-    model.scale.set(scale)
-    model.anchor.set(0.5, 0.5)
-    if (artMetrics) {
-      model.position.set(canvas.width / 2 - artMetrics.cx * scale, canvas.height / 2 - artMetrics.cy * scale)
-    } else {
-      model.position.set(canvas.width / 2, canvas.height / 2)
+    const base = artBase()
+    const cover = artCover()
+    if (!base || !cover || !(base.w > 0 && base.h > 0)) return { width: size, height: Math.round(size * 1.2) }
+    const scale = (size - ART_PADDING) / base.w
+    const coverW = cover.x1 - cover.x0
+    const coverH = cover.y1 - cover.y0
+    return {
+      width: Math.max(size, Math.round(coverW * scale) + ART_PADDING),
+      height: Math.max(1, Math.round(coverH * scale) + ART_PADDING),
     }
   }
 
-  /** 采样一帧帧缓冲并并入绘制区域（并集，只增不减）；返回 true 表示需要按新区域重排。 */
+  /** 画布重设（位图 + 渲染器 + 分区叠加层）。 */
+  function resizeCanvas(width: number, height: number): void {
+    if (!canvas) return
+    if (canvas.width === width && canvas.height === height) return
+    canvas.width = width
+    canvas.height = height
+    try { app?.renderer.resize(width, height) } catch { /* 旧渲染器 */ }
+    if (zoneOverlay) {
+      zoneOverlay.width = width
+      zoneOverlay.height = height
+      zoneOverlay.style.width = `${width}px`
+      zoneOverlay.style.height = `${height}px`
+    }
+    syncDebugPanelWidth()
+  }
+
+  /** 按当前尺寸与覆盖范围适配模型：缩放由冻结基准决定，模型钉在画布右/下边
+   * （画布在视口里右/下锚定，之后扩画布只向上/左延伸，视觉位置不变）。 */
+  function fitModel(): void {
+    if (!model || !canvas) return
+    const base = artBase()
+    const cover = artCover()
+    if (!base || !cover || !(base.w > 0 && base.h > 0)) return
+    const size = renderedSizeFor(pos.size)
+    const scale = (size - ART_PADDING) / base.w
+    artScale = scale
+    const canvasSize = canvasSizeFor(size)
+    resizeCanvas(canvasSize.width, canvasSize.height)
+    model.anchor.set(0.5, 0.5)
+    model.scale.set(scale)
+    const originX = canvasSize.width - ART_PADDING / 2 - cover.x1 * scale
+    const originY = canvasSize.height - ART_PADDING / 2 + cover.y0 * scale
+    model.position.set(originX, originY)
+    modelOrigin = { x: originX, y: originY }
+  }
+
+  /** 覆盖范围变大时只扩画布（必要时把模型整体左/上移），**绝不改缩放**：
+   * 动作再多也不会让桌宠突然变小（spec §4）。 */
+  function growCanvasForArt(): void {
+    if (!canvas || !model || !artUnion || !(artScale > 0)) return
+    const scale = artScale
+    const half = ART_PADDING / 2
+    let width = canvas.width
+    let height = canvas.height
+    let shiftX = 0
+    let shiftY = 0
+    // 右/下越界：画布右/下边锚定在视口上，只能把模型整体左/上移。
+    const right = modelOrigin.x + artUnion.x1 * scale
+    const bottom = modelOrigin.y - artUnion.y0 * scale
+    if (right + half > width) shiftX = -(right + half - width)
+    if (bottom + half > height) shiftY = -(bottom + half - height)
+    // 左/上越界：扩画布（画布右/下锚定 → 新增区域在左/上）。
+    const left = modelOrigin.x + artUnion.x0 * scale + shiftX
+    const top = modelOrigin.y - artUnion.y1 * scale + shiftY
+    const growX = Math.max(0, Math.ceil(half - left))
+    const growY = Math.max(0, Math.ceil(half - top))
+    if (!shiftX && !shiftY && !growX && !growY) return
+    width += growX
+    height += growY
+    resizeCanvas(width, height)
+    // 画布像素原点随之向左/上移动：模型画布坐标要加上增长量，视觉位置才不变。
+    const originX = modelOrigin.x + shiftX + growX
+    const originY = modelOrigin.y + shiftY + growY
+    model.position.set(originX, originY)
+    modelOrigin = { x: originX, y: originY }
+  }
+
+  /** 采样一帧帧缓冲并入覆盖范围（并集，只增不减）；返回 true 表示覆盖变大。 */
   function sampleArtBounds(scale: number): boolean {
     const gl = app?.renderer?.gl
     if (!gl || typeof gl.readPixels !== 'function' || !canvas) return false
@@ -708,7 +804,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       }
     }
     if (maxX < 0 || maxY < 0) return false
-    // 贴边的包围盒说明这一帧的绘制区域被画布截断：外扩，避免继续裁切（spec §4）。
+    // 贴边的包围盒说明这一帧的绘制区域被画布截断：该侧外扩，避免继续裁切（spec §4）。
     let x0 = minX
     let x1 = maxX
     let y0 = minY
@@ -717,50 +813,28 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (maxX >= w - 2) x1 += ART_EDGE_MARGIN_PX
     if (minY <= 1) y0 -= ART_EDGE_MARGIN_PX
     if (maxY >= h - 2) y1 += ART_EDGE_MARGIN_PX
-    const artW = x1 - x0 + 1
-    const artH = y1 - y0 + 1
-    if (artW < 8 || artH < 8) return false
+    if (x1 - x0 + 1 < 8 || y1 - y0 + 1 < 8) return false
+    // 画布坐标 → 模型单位（相对模型原点）：模型可能在画布内被钉在右下，不能按画布中心换算。
     const sample = {
-      w: artW / scale,
-      h: artH / scale,
-      cx: ((x0 + x1 + 1) / 2 - w / 2) / scale,
-      cy: ((y0 + y1 + 1) / 2 - h / 2) / scale,
+      x0: (x0 - modelOrigin.x) / scale,
+      x1: (x1 + 1 - modelOrigin.x) / scale,
+      y0: (modelOrigin.y - (y1 + 1)) / scale,
+      y1: (modelOrigin.y - y0) / scale,
     }
-    const sampleRect = {
-      x0: sample.cx - sample.w / 2,
-      x1: sample.cx + sample.w / 2,
-      y0: sample.cy - sample.h / 2,
-      y1: sample.cy + sample.h / 2,
-    }
-    if (!artMetrics) {
-      artMetrics = metricsFromRect(sampleRect)
+    if (!artUnion) {
+      artUnion = sample
       return true
     }
-    const current = {
-      x0: artMetrics.cx - artMetrics.w / 2,
-      x1: artMetrics.cx + artMetrics.w / 2,
-      y0: artMetrics.cy - artMetrics.h / 2,
-      y1: artMetrics.cy + artMetrics.h / 2,
-    }
     const union = {
-      x0: Math.min(current.x0, sampleRect.x0),
-      x1: Math.max(current.x1, sampleRect.x1),
-      y0: Math.min(current.y0, sampleRect.y0),
-      y1: Math.max(current.y1, sampleRect.y1),
+      x0: Math.min(artUnion.x0, sample.x0),
+      x1: Math.max(artUnion.x1, sample.x1),
+      y0: Math.min(artUnion.y0, sample.y0),
+      y1: Math.max(artUnion.y1, sample.y1),
     }
-    const grew = (union.x1 - union.x0) > artMetrics.w + 0.5 || (union.y1 - union.y0) > artMetrics.h + 0.5
-    artMetrics = metricsFromRect(union)
+    const grew = (union.x1 - union.x0) > (artUnion.x1 - artUnion.x0) + 0.5
+      || (union.y1 - union.y0) > (artUnion.y1 - artUnion.y0) + 0.5
+    artUnion = union
     return grew
-  }
-
-  /** 模型单位矩形（相对模型原点）→ 画布适配用的宽高 + 中心偏移。 */
-  function metricsFromRect(rect: { x0: number; x1: number; y0: number; y1: number }): { w: number; h: number; cx: number; cy: number } {
-    return {
-      w: rect.x1 - rect.x0,
-      h: rect.y1 - rect.y0,
-      cx: (rect.x0 + rect.x1) / 2,
-      cy: (rect.y0 + rect.y1) / 2,
-    }
   }
 
   /** 指针命中探测：渲染后读指针附近一小块帧缓冲，据此决定画布是否拦截指针。
@@ -818,26 +892,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     box.style.bottom = `${pos.bottom}px`
   }
 
-  /** 立即应用画布尺寸（size 视为可见宽度，受视口限制，spec §4）。 */
+  /** 立即应用尺寸（size = 可见宽度，受视口限制，spec §4）。 */
   function applySizeNow(nextSize: number): void {
     pos.size = nextSize
     if (!canvas || !app) return
-    const renderSize = renderedSizeFor(nextSize)
-    const canvasSize = canvasSizeFor(renderSize)
-    canvas.width = canvasSize.width
-    canvas.height = canvasSize.height
-    try { app.renderer.resize(canvasSize.width, canvasSize.height) } catch { /* 旧渲染器 */ }
-    if (zoneOverlay) {
-      zoneOverlay.width = canvasSize.width
-      zoneOverlay.height = canvasSize.height
-      zoneOverlay.style.width = `${canvasSize.width}px`
-      zoneOverlay.style.height = `${canvasSize.height}px`
-    }
-    syncDebugPanelWidth()
-    if (model) fitModel()
+    fitModel()
     // 画布尺寸变化会改变可停靠范围：重新钳制位置。
     applyPosition()
-    // 重设画布会清空位图：立刻重绘，否则拖动尺寸时合成帧是空白（抖动/闪烁）。
+    // 重设画布会清空位图：立刻重绘，否则合成帧会出现空白（闪烁）。
     try { app.render?.() } catch { /* 旧渲染器 */ }
   }
 
@@ -886,7 +948,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     hitAreas = []
     baseModelW = 0
     baseModelH = 0
-    artMetrics = null
+    artRef = null
+    artUnion = null
+    artScale = 0
+    modelOrigin = { x: 0, y: 0 }
     if (zoneOverlay && zoneOverlay.parentNode) zoneOverlay.parentNode.removeChild(zoneOverlay)
     zoneOverlay = null
     if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas)
@@ -916,7 +981,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       const size = pos.size
       canvas.width = size
       canvas.height = Math.round(size * 1.2)
-      canvas.style.cssText = 'pointer-events:auto;display:block'
+      // 出现即定形：先隐藏画布，等绘制区域采样完成后再显示（避免出现后再改尺寸）。
+      canvas.style.cssText = 'pointer-events:auto;display:block;visibility:hidden'
       zoneOverlay = document.createElement('canvas')
       zoneOverlay.width = canvas.width
       zoneOverlay.height = canvas.height
@@ -982,18 +1048,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         }
       } catch { /* 包围盒不可用则保留 loaded.width/height */ }
       hitAreas = Object.keys(loaded.internalModel?.hitAreas ?? {})
-      // 根据模型原始宽高自适应 canvas（size 视为可见宽度，受视口限制）
-      const canvasSize = canvasSizeFor(renderedSizeFor(pos.size))
-      canvas.width = canvasSize.width
-      canvas.height = canvasSize.height
-      try { app.renderer.resize(canvasSize.width, canvasSize.height) } catch { /* 旧渲染器 */ }
-      if (zoneOverlay) {
-        zoneOverlay.width = canvasSize.width
-        zoneOverlay.height = canvasSize.height
-        zoneOverlay.style.width = `${canvasSize.width}px`
-        zoneOverlay.style.height = `${canvasSize.height}px`
-      }
-      syncDebugPanelWidth()
+      // 初始画布按模型盒（尚无实测区域）；预热采样结束后再按实测区域定形。
+      const initial = canvasSizeFor(renderedSizeFor(pos.size))
+      resizeCanvas(initial.width, initial.height)
       // 动作真正播完信号：motion() 的 Promise 在开始时即 resolve，不能作为恢复/解除 focus 的时机
       const motionManager = loaded.internalModel?.motionManager
       if (motionManager?.on) {
@@ -1005,17 +1062,37 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       fitModel()
       // 绘制区域采样必须排在渲染之后：PIXI 把 render 挂在 LOW(-25)，
       // 用默认 NORMAL(0) 的回调会在首帧渲染前读到空帧缓冲（实测 alpha 全 0）。
-      // 采样窗口覆盖待机动作的摆动极值：单帧包围盒会比后续姿态小，直接锁死会裁切模型。
+      // 预热阶段隐藏画布累积样本 → 冻结缩放基准 → 显示；之后覆盖变大只扩画布。
       try {
-        let dense = ART_SAMPLE_TICKS
+        let warmTicks = 0
+        let samples = 0
+        let settled = 0
+        let revealed = false
         let tick = 0
+        const reveal = (): void => {
+          if (revealed || disposed || model !== loaded) return
+          revealed = true
+          artRef = artUnion ? metricsFromRect(artUnion) : null
+          applySizeNow(pos.size)
+          if (canvas) canvas.style.visibility = ''
+        }
         const measure = (): void => {
           if (disposed || model !== loaded) { detachArtMeasure?.(); return }
-          const interval = dense > 0 ? ART_SAMPLE_EVERY : ART_WATCHDOG_EVERY
-          if (dense > 0) dense -= 1
-          if (tick++ % interval === 0) {
-            const scaleNow = artScale > 0 ? artScale : baseModelW > 0 ? (pos.size - 8) / baseModelW : 0
-            if (sampleArtBounds(scaleNow)) applySizeNow(pos.size)
+          warmTicks += 1
+          const interval = revealed ? ART_WATCHDOG_EVERY : ART_SAMPLE_EVERY
+          const due = tick++ % interval === 0
+          if (due) {
+            const scaleNow = artScale > 0 ? artScale : baseModelW > 0 ? (pos.size - ART_PADDING) / baseModelW : 0
+            const grew = sampleArtBounds(scaleNow)
+            samples += 1
+            settled = grew ? 0 : settled + 1
+            if (revealed) {
+              // 迟到的动作姿势：只扩画布、不动缩放，桌宠不会突然变小。
+              if (grew) growCanvasForArt()
+            }
+          }
+          if (!revealed) {
+            if ((samples > 0 && settled >= ART_WARMUP_SAMPLES) || warmTicks >= ART_WARMUP_TICKS) reveal()
           }
         }
         detachArtMeasure?.()
