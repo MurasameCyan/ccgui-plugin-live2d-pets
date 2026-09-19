@@ -46,7 +46,8 @@ async function mountPet(options: {
   vendor?: "ready" | "pending" | "failed";
   model?: ReturnType<typeof makeModel>;
   modelReady?: Promise<void>;
-  gl?: unknown;
+  /** 绘制区域（画布坐标）：驱动 gl.readPixels 的 alpha 包围盒。 */
+  art?: { x0: number; x1: number; y0: number; y1: number };
 } = {}) {
   const harness = makeContext();
   const id = ++mountId;
@@ -70,11 +71,42 @@ async function mountPet(options: {
   });
 
   let tickerRunning = false;
+  // 真实 PIXI 语义：回调按优先级从高到低执行，Application 把渲染挂在
+  // LOW(-25)。读帧缓冲的回调必须排在它之后，否则读到的是空帧。
+  const listeners: Array<{ fn: () => void; priority: number; once: boolean }> = [];
+  let rendered = false;
   const ticker = {
     maxFPS: 0,
-    addOnce: vi.fn(),
+    add: vi.fn((fn: () => void, _context?: unknown, priority = 0) => { listeners.push({ fn, priority, once: false }); }),
+    addOnce: vi.fn((fn: () => void, _context?: unknown, priority = 0) => { listeners.push({ fn, priority, once: true }); }),
+    remove: vi.fn((fn: () => void) => {
+      const index = listeners.findIndex((entry) => entry.fn === fn);
+      if (index >= 0) listeners.splice(index, 1);
+    }),
     start() { tickerRunning = true; },
     stop() { tickerRunning = false; },
+  };
+  /** 跑一帧：按优先级降序执行，一次性回调执行前摘除。 */
+  const frame = () => {
+    for (const entry of [...listeners].sort((a, b) => b.priority - a.priority)) {
+      if (entry.once) ticker.remove(entry.fn);
+      entry.fn();
+    }
+  };
+  // WebGL 回读只在本帧渲染之后才有内容：渲染前读到的是全透明缓冲。
+  const glMock = options.art && {
+    RGBA: 6408,
+    UNSIGNED_BYTE: 5121,
+    readPixels: (_x: number, _y: number, w: number, h: number, _format: number, _type: number, pixels: Uint8Array) => {
+      if (!rendered) return;
+      const art = options.art!;
+      for (let y = 0; y < h; y += 1) {
+        // GL 原点在左下，换算成画布坐标。
+        const canvasY = h - 1 - y;
+        if (canvasY < art.y0 || canvasY > art.y1) continue;
+        for (let x = art.x0; x <= art.x1; x += 1) pixels[(y * w + x) * 4 + 3] = 255;
+      }
+    },
   };
   const destroy = vi.fn(() => { tickerRunning = false; });
   type LoadOptions = {
@@ -89,9 +121,13 @@ async function mountPet(options: {
     Application: class {
       stage = { addChild: vi.fn() };
       ticker = ticker;
-      renderer = { resize: vi.fn(), gl: options.gl };
+      renderer = { resize: vi.fn(), gl: glMock };
       destroy = destroy;
-      constructor() { tickerRunning = true; }
+      constructor() {
+        tickerRunning = true;
+        // Application 自己的渲染回调：优先级 LOW(-25)。
+        listeners.push({ fn: () => { rendered = true; }, priority: -25, once: false });
+      }
     },
     live2d: { Live2DModel: {
       async from(url: string, loadOptions?: LoadOptions) {
@@ -124,7 +160,7 @@ async function mountPet(options: {
   cleanups.push(unmount);
   await act(async () => { root.render(React.createElement(Overlay)); });
   const anchor = container.firstElementChild as HTMLDivElement;
-  return { ...harness, runtime, anchor, scripts, ticker, loadModel, destroy, unmount, isTicking: () => tickerRunning };
+  return { ...harness, runtime, anchor, scripts, ticker, frame, loadModel, destroy, unmount, isTicking: () => tickerRunning };
 }
 
 function pointer(target: HTMLCanvasElement, type: string, x: number, y: number) {
@@ -193,28 +229,16 @@ describe("pet overlay display lifecycle", () => {
     await act(async () => { pointer(canvas, "pointerup", 1200, 1200); });
   });
 
-  it("shrinks the canvas to the drawn area after the first frame", async () => {
+  it("shrinks the canvas to the drawn area measured after the frame is rendered", async () => {
     const canvasW = 240;
     const canvasH = 472;
-    const gl = {
-      RGBA: 6408,
-      UNSIGNED_BYTE: 5121,
-      readPixels: (_x: number, _y: number, w: number, h: number, _f: number, _t: number, pixels: Uint8Array) => {
-        // 画布坐标 x 100..139, y 200..299（GL 原点在左下）。
-        for (let y = 0; y < h; y += 1) {
-          const canvasY = h - 1 - y;
-          if (canvasY < 200 || canvasY > 299) continue;
-          for (let x = 100; x <= 139; x += 1) pixels[(y * w + x) * 4 + 3] = 255;
-        }
-      },
-    };
     const model = makeModel();
-    const { anchor, ticker } = await mountPet({ gl, model });
+    // 绘制区域：画布坐标 x 100..139 (40px), y 200..299 (100px)。
+    const { anchor, frame } = await mountPet({ art: { x0: 100, x1: 139, y0: 200, y1: 299 }, model });
     const canvas = anchor.querySelector("canvas")!;
     expect(canvas.width).toBe(canvasW);
     expect(canvas.height).toBe(canvasH);
 
-    const frame = ticker.addOnce.mock.calls.at(-1)?.[0] as () => void;
     await act(async () => { frame(); });
 
     // 尺寸语义：size = 可见宽度。绘制区域 40x100px 撑满后 canvas 约 240x588，

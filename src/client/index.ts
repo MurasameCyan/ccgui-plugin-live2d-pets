@@ -77,6 +77,13 @@ const BUBBLE_DISPLAY_MS = 2500
  * 长时间挂页会持续占满 GPU/主线程；桌宠动画默认 30fps 足够，用户可在设置中改档。
  */
 const DEFAULT_MAX_FPS = 30
+/**
+ * PIXI.UPDATE_PRIORITY.UTILITY(-50)：排在 Application 的 render(LOW=-25) 之后。
+ * 绘制区域测量必须读“已渲染”的帧缓冲，NORMAL(0) 会在渲染前跑，读到空帧。
+ */
+const TICKER_PRIORITY_UTILITY = -50
+/** 绘制区域测量的最多重试帧数：贴图可能晚于首帧到位。 */
+const ART_MEASURE_FRAMES = 30
 
 /** pixi-live2d-display MotionPriority（对应库内枚举：NONE=0, IDLE=1, NORMAL=2, FORCE=3）。 */
 const MotionPriority = {
@@ -286,7 +293,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     destroy(remove?: boolean): void
     stage: { addChild(child: unknown): unknown }
     ticker: {
-      addOnce(fn: () => void): unknown
+      addOnce(fn: () => void, context?: unknown, priority?: number): unknown
+      add(fn: () => void, context?: unknown, priority?: number): unknown
+      remove(fn: () => void, context?: unknown): unknown
       start(): unknown
       stop(): unknown
       maxFPS?: number
@@ -305,6 +314,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // 实测绘制区域（画布像素除以 scale 归一）：模型盒常远宽于实际绘制区域
   // （Hiyori 实测仅占盒宽 35%），据其收紧画布后桌宠才能贴边（spec §4）。
   let artMetrics: { w: number; h: number; cx: number; cy: number } | null = null
+  /** 摘除跨帧绘制区域测量（模型切换/卸载时必须停掉，否则 ticker 一直重试）。 */
+  let detachArtMeasure: (() => void) | null = null
   // 尺寸变更合并：连续设置更新只落地最后一档，避免串行 WebGL resize。
   let pendingSize: number | null = null
   let sizeRaf = 0
@@ -766,6 +777,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     lastPointerClient = null
     detachMotionFinish?.()
     detachMotionFinish = null
+    // 跨帧绘制区域测量绑在旧 ticker 上：必须在销毁 app 前摘掉，否则重试回调残留。
+    detachArtMeasure?.()
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
     pendingSize = null
     stopZoneLoop()
@@ -895,15 +908,29 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       }
       refreshDebugMotionGroups()
       fitModel(pos.size)
-      // 首帧尺寸未知时延迟适配；首帧后按实测绘制区域收紧画布（每模型一次）。
+      // 绘制区域测量必须排在渲染之后：PIXI 把 render 挂在 LOW(-25)，
+      // 用默认 NORMAL(0) 的回调会在首帧渲染前读到空帧缓冲（实测 alpha 全 0）。
+      // 贴图可能晚于首帧到位，因此跨帧重试直到量出结果或帧数用尽。
       try {
-        app.ticker.addOnce(() => {
-          if (disposed || model !== loaded) return
+        let framesLeft = ART_MEASURE_FRAMES
+        const measure = (): void => {
+          if (disposed || model !== loaded) { detachArtMeasure?.(); return }
           if (!(baseModelW > 0 && baseModelH > 0)) fitModel(pos.size)
-          if (artMetrics) return
           const scaleNow = baseModelW > 0 ? (pos.size - 8) / baseModelW : 0
-          if (measureArtBounds(scaleNow)) applySizeNow(pos.size)
-        })
+          if (measureArtBounds(scaleNow)) {
+            detachArtMeasure?.()
+            applySizeNow(pos.size)
+            return
+          }
+          if (--framesLeft <= 0) detachArtMeasure?.()
+        }
+        detachArtMeasure?.()
+        // UTILITY(-50)：位于 PIXI 渲染（LOW）之后，读到的就是本帧画面。
+        app.ticker.add(measure, undefined, TICKER_PRIORITY_UTILITY)
+        detachArtMeasure = () => {
+          detachArtMeasure = null
+          try { app?.ticker.remove(measure) } catch { /* ticker 已销毁 */ }
+        }
       } catch { /* 首帧适配 */ }
       if (lastState) playState(lastState)
       if (showSpatialZones) startZoneLoop()
