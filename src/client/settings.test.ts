@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomModelEntry } from "../models";
+import type { CustomPersonaDef } from "../persona-shared";
 import { clearReactRuntime, setReactRuntime } from "../react-runtime";
 import { PetRuntime } from "../runtime";
 import type { AssetDirectoryGrant, ReactLike } from "../sdk";
@@ -55,9 +56,10 @@ function customRows(container: ParentNode): HTMLElement {
   return container.querySelector<HTMLElement>('[role="radiogroup"][aria-label="我的模型"]')!;
 }
 
-async function mountSettings(models: CustomModelEntry[] = [], selected?: string) {
+async function mountSettings(models: CustomModelEntry[] = [], selected?: string, personas: CustomPersonaDef[] = []) {
   const harness = makeContext();
   harness.documents.set("custom-models.jsonc", { content: JSON.stringify({ models }), version: "initial-models" });
+  if (personas.length > 0) harness.documents.set("personas.jsonc", { content: JSON.stringify({ personas }), version: "initial-personas" });
   if (selected) await harness.ctx.storage.set("config", { model: selected });
   const grantDirectory = vi.spyOn(harness.ctx.assets, "grantDirectory");
   const remoteUrl = vi.spyOn(harness.ctx.assets, "remoteUrl");
@@ -102,7 +104,7 @@ describe("pet settings model sources", () => {
   });
 
   it("uses the host menu styling for persona choices and persists a selection", async () => {
-    const { container, runtime } = await mountSettings();
+    const { container, runtime, ctx, unmount } = await mountSettings();
     const trigger = container.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="人设台词"]');
 
     expect(container.querySelector("select")).toBeNull();
@@ -121,6 +123,12 @@ describe("pet settings model sources", () => {
     expect(runtime.snapshot().config.persona).toBe("genki");
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(container.querySelector('[role="listbox"]')).toBeNull();
+
+    await act(async () => { unmount(); });
+    const reloaded = new PetRuntime(ctx);
+    await reloaded.ready;
+    expect(reloaded.snapshot().config.persona).toBe("genki");
+    reloaded.dispose();
   });
 
   it("supports keyboard navigation and dismisses the persona menu", async () => {
@@ -139,8 +147,32 @@ describe("pet settings model sources", () => {
     expect(trigger).toBe(document.activeElement);
 
     await act(async () => { trigger.click(); });
-    await act(async () => { document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
+    await act(async () => { document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
     expect(container.querySelector('[role="listbox"]')).toBeNull();
+
+    await act(async () => {
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      trigger.click();
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const selected = container.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')!;
+    await act(async () => { selected.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); });
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it("scrolls a long persona menu and flips it above the trigger near the viewport edge", async () => {
+    const personas = Array.from({ length: 20 }, (_, index) => ({ id: `custom-${index}`, name: `自定义人设 ${index}`, base: "tsundere" }));
+    const { container } = await mountSettings([], undefined, personas);
+    const trigger = container.querySelector<HTMLButtonElement>('button[role="combobox"][aria-label="人设台词"]')!;
+    trigger.getBoundingClientRect = () => ({ x: 40, y: 700, top: 700, right: 108, bottom: 732, left: 40, width: 68, height: 32, toJSON: () => ({}) });
+
+    await act(async () => { trigger.click(); });
+    const menu = container.querySelector<HTMLElement>('[role="listbox"][aria-label="人设台词"]')!;
+    expect(menu.querySelectorAll('[role="option"]')).toHaveLength(26);
+    expect(menu.style.maxHeight).toBe("240px");
+    expect(menu.style.overflowY).toBe("auto");
+    expect(menu.style.bottom).toBe("calc(100% + 4px)");
+    expect(menu.style.top).toBe("");
   });
 
   it("adds a granted directory model and retains its selected source after reload", async () => {

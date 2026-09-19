@@ -66,7 +66,7 @@ const hostSelectTriggerClass = [
 ].join(" ");
 const hostSelectMenuClass = [
   "flex w-full flex-col gap-1 rounded-2xl border border-border-button-default",
-  "bg-background-primary-default p-2 shadow-dropdown outline-none",
+  "max-h-[240px] overflow-auto bg-background-primary-default p-2 shadow-dropdown outline-none",
 ].join(" ");
 const hostSelectOptionClass = [
   "flex w-full cursor-pointer items-center gap-2 rounded-2lg px-2 py-1.5 text-left",
@@ -75,6 +75,7 @@ const hostSelectOptionClass = [
 ].join(" ");
 
 interface PersonaChoice { id: string; name: string }
+type PersonaMenuPlacement = "top" | "bottom";
 interface PersonaSelectProps {
   value: string;
   disabled: boolean;
@@ -82,27 +83,86 @@ interface PersonaSelectProps {
   onChange: (value: string) => void;
 }
 
+const PERSONA_LISTBOX_ID = "live2d-persona-listbox";
+
+function clippingBounds(element: HTMLElement): { top: number; bottom: number } {
+  let top = 0;
+  let bottom = window.innerHeight;
+  for (let current = element.parentElement; current; current = current.parentElement) {
+    const overflowY = getComputedStyle(current).overflowY;
+    if (!/(auto|scroll|hidden|clip)/.test(overflowY)) continue;
+    const rect = current.getBoundingClientRect();
+    top = Math.max(top, rect.top);
+    bottom = Math.min(bottom, rect.bottom);
+  }
+  return { top, bottom };
+}
+
+function personaOptionId(id: string): string {
+  return `live2d-persona-option-${encodeURIComponent(id)}`;
+}
+
 function PersonaSelect(props: PersonaSelectProps): ReactNode {
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [placement, setPlacement] = useState<PersonaMenuPlacement>("bottom");
+  const [menuMaxHeight, setMenuMaxHeight] = useState(240);
   const root = useRef<HTMLDivElement | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedIndex = Math.max(0, props.options.findIndex((option) => option.id === props.value));
   const selected = props.options[selectedIndex];
 
+  const updatePlacement = (): void => {
+    const element = trigger.current;
+    if (!element) return;
+    const gap = 4;
+    const preferredHeight = 240;
+    const rect = element.getBoundingClientRect();
+    const bounds = clippingBounds(element);
+    const below = Math.max(0, bounds.bottom - rect.bottom - gap);
+    const above = Math.max(0, rect.top - bounds.top - gap);
+    const nextPlacement: PersonaMenuPlacement = below >= preferredHeight || below >= above ? "bottom" : "top";
+    const available = nextPlacement === "bottom" ? below : above;
+    setPlacement(nextPlacement);
+    setMenuMaxHeight(Math.max(64, Math.min(preferredHeight, Math.floor(available))));
+  };
+  const openMenu = (): void => {
+    setActiveIndex(selectedIndex);
+    updatePlacement();
+    setOpen(true);
+  };
+
   useEffect(() => {
     if (!open) return;
-    const dismiss = (event: MouseEvent): void => {
+    const dismiss = (event: Event): void => {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", dismiss);
-    return () => document.removeEventListener("mousedown", dismiss);
+    const dismissOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      queueMicrotask(() => trigger.current?.focus());
+    };
+    const reposition = (): void => updatePlacement();
+    document.addEventListener("pointerdown", dismiss, true);
+    document.addEventListener("focusin", dismiss, true);
+    document.addEventListener("keydown", dismissOnEscape, true);
+    document.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss, true);
+      document.removeEventListener("focusin", dismiss, true);
+      document.removeEventListener("keydown", dismissOnEscape, true);
+      document.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
-    optionRefs.current[selectedIndex]?.focus();
-  }, [open, selectedIndex]);
+    optionRefs.current[activeIndex]?.focus();
+  }, [open, activeIndex]);
 
   const close = (restoreFocus = false): void => {
     setOpen(false);
@@ -111,7 +171,9 @@ function PersonaSelect(props: PersonaSelectProps): ReactNode {
   const focusOption = (index: number): void => {
     const count = props.options.length;
     if (count === 0) return;
-    optionRefs.current[(index + count) % count]?.focus();
+    const next = (index + count) % count;
+    setActiveIndex(next);
+    optionRefs.current[next]?.focus();
   };
   const onTriggerKeyDown = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
@@ -119,11 +181,8 @@ function PersonaSelect(props: PersonaSelectProps): ReactNode {
       close();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (!open) setOpen(true);
+      if (!open) openMenu();
       else focusOption(selectedIndex + (event.key === "ArrowDown" ? 1 : -1));
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      setOpen((current) => !current);
     }
   };
   const onOptionKeyDown = (event: KeyboardEvent, index: number): void => {
@@ -136,6 +195,8 @@ function PersonaSelect(props: PersonaSelectProps): ReactNode {
     } else if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
       focusOption(event.key === "Home" ? 0 : props.options.length - 1);
+    } else if (event.key === "Tab") {
+      close();
     }
   };
   const choose = (value: string): void => {
@@ -151,9 +212,19 @@ function PersonaSelect(props: PersonaSelectProps): ReactNode {
       "aria-label": "人设台词",
       "aria-haspopup": "listbox",
       "aria-expanded": String(open),
+      "aria-controls": PERSONA_LISTBOX_ID,
+      "aria-activedescendant": open ? personaOptionId(props.options[activeIndex]?.id ?? props.value) : undefined,
       disabled: props.disabled,
       className: hostSelectTriggerClass,
-      onClick: () => setOpen((current) => !current),
+      style: {
+        minWidth: 68,
+        border: "1px solid var(--color-border-button-default, rgba(128,128,128,.35))",
+        borderRadius: 8,
+        backgroundColor: "var(--color-background-primary-default, #1f1f1f)",
+        color: "var(--color-text-primary, #f3f4f6)",
+        boxShadow: "var(--shadow-xs, 0 1px 2px rgba(0,0,0,.18))",
+      },
+      onClick: () => { if (open) close(); else openMenu(); },
       onKeyDown: onTriggerKeyDown,
     },
     createElement("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, selected?.name ?? props.value),
@@ -165,16 +236,26 @@ function PersonaSelect(props: PersonaSelectProps): ReactNode {
       style: { flexShrink: 0, transform: open ? "rotate(180deg)" : "none", transition: "transform 150ms ease" },
     }, createElement("path", { d: "M4 6l4 4 4-4", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round" }))),
     open && createElement("div", {
+      id: PERSONA_LISTBOX_ID,
       role: "listbox",
       "aria-label": "人设台词",
       className: hostSelectMenuClass,
       style: {
         position: "absolute",
         zIndex: 1000,
-        top: "calc(100% + 4px)",
+        top: placement === "bottom" ? "calc(100% + 4px)" : undefined,
+        bottom: placement === "top" ? "calc(100% + 4px)" : undefined,
         left: 0,
         width: 266,
         maxWidth: "calc(100vw - 32px)",
+        maxHeight: menuMaxHeight,
+        overflowY: "auto",
+        border: "1px solid var(--color-border-button-default, rgba(128,128,128,.35))",
+        borderRadius: 16,
+        backgroundColor: "var(--color-background-primary-default, #1f1f1f)",
+        color: "var(--color-text-primary, #f3f4f6)",
+        boxShadow: "var(--shadow-dropdown, 0 12px 30px rgba(0,0,0,.35))",
+        padding: 8,
       },
     }, props.options.map((option, index) => {
       const isSelected = option.id === props.value;
@@ -182,10 +263,21 @@ function PersonaSelect(props: PersonaSelectProps): ReactNode {
         key: option.id,
         ref: (element: HTMLButtonElement | null) => { optionRefs.current[index] = element; },
         type: "button",
+        id: personaOptionId(option.id),
         role: "option",
         "aria-selected": String(isSelected),
-        tabIndex: isSelected ? 0 : -1,
+        tabIndex: index === activeIndex ? 0 : -1,
         className: `${hostSelectOptionClass}${isSelected ? " bg-dropdown-item-hover-background" : ""}`,
+        style: {
+          width: "100%",
+          border: "none",
+          borderRadius: 8,
+          padding: "6px 8px",
+          backgroundColor: isSelected ? "var(--color-dropdown-item-hover-background, rgba(255,255,255,.08))" : undefined,
+          color: "var(--color-text-primary, #f3f4f6)",
+          textAlign: "left",
+        },
+        onFocus: () => setActiveIndex(index),
         onClick: () => choose(option.id),
         onKeyDown: (event: KeyboardEvent) => onOptionKeyDown(event, index),
       }, option.name);
