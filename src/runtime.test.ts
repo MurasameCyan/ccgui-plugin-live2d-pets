@@ -216,6 +216,41 @@ describe("PetRuntime", () => {
     }
   });
 
+  it("tracks turns for every session without evicting older ones", async () => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      const hooks = harness.getTurnHooks()!;
+      const sessionIds = Array.from({ length: 10 }, (_, index) => `session-${index + 1}`);
+      for (const sessionId of sessionIds) {
+        hooks.onTurnStarted?.({ ...turnEvent(), sessionId, turnId: `turn-${sessionId}` });
+      }
+
+      // 早期会话的回合必须仍然在跟踪：切回去要能立刻恢复实时状态
+      harness.emit("session://activated", { engine: "codex", sessionId: "session-1" });
+      expect(runtime.snapshot().state).toBe("thinking");
+      hooks.onRuntimeEvent?.({
+        ...turnEvent(),
+        sessionId: "session-1",
+        turnId: "turn-session-1",
+        eventId: "permission",
+        workspaceId: "workspace-1",
+        workspacePath: "C:/work",
+        kind: "permission-requested",
+        tool: "shell",
+        path: null,
+      });
+      expect(runtime.snapshot().state).toBe("waiting");
+
+      // 最新会话同样保留
+      harness.emit("session://activated", { engine: "codex", sessionId: "session-10" });
+      expect(runtime.snapshot().state).toBe("thinking");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
   it.each([
     { sessionId: "other-session" },
     { engine: "claude" },

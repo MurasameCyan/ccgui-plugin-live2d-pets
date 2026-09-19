@@ -68,8 +68,6 @@ const DISPLAY_KEY = "display";
 const CONFIG_KEY = "config";
 /** 宿主激活会话话题（SDK 0.3.8）：`{ engine, sessionId }`；pending 标签页 sessionId 为 null。 */
 const SESSION_ACTIVATED_TOPIC = "session://activated";
-/** 同时跟踪的会话回合上限：切走再切回仍能恢复表现，超出按最旧淘汰。 */
-const MAX_TRACKED_TURNS = 8;
 
 /** 活跃会话引用；`sessionId` 为 null 表示宿主尚未返回 native ID 的 pending 标签页。 */
 interface SessionRef { engine: string; sessionId: string | null; workspacePath?: string }
@@ -240,11 +238,8 @@ export class PetRuntime {
       turnId,
       state,
     };
+    // 不设数量上限：任何会话的回合都要保留到终态/会话关闭，切回时才能立刻恢复反馈。
     this.turns.push(turn);
-    while (this.turns.length > MAX_TRACKED_TURNS) {
-      const dropped = this.turns.shift();
-      if (dropped) this.clearTurnTimer(dropped);
-    }
     return turn;
   }
 
