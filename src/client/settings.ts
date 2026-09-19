@@ -642,6 +642,10 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
         createElement("input", { type: "checkbox", checked: view.config.enabled, disabled: !writable, onChange: (event: Event) => write("enabled", (event.currentTarget as HTMLInputElement).checked) }),
         " 显示宠物",
       ),
+      createElement("label", { style: { display: "block", marginTop: 8 } },
+        createElement("input", { type: "checkbox", checked: view.config.keepAnimatingWhenInactive, disabled: !writable, onChange: (event: Event) => write("keepAnimatingWhenInactive", (event.currentTarget as HTMLInputElement).checked) }),
+        " 窗口非激活时保持动态",
+      ),
       createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10 } },
         "尺寸",
         createElement("input", { type: "range", min: 40, max: 400, value: view.config.size, disabled: !writable, onChange: (event: Event) => write("size", Number((event.currentTarget as HTMLInputElement).value)), style: { flex: 1 } }),
@@ -702,10 +706,12 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       );
     }
     const flags = [entry.spatialTap && "分区已覆盖", entry.animationMap && "动画已映射"].filter(Boolean).join(" · ");
+    // Cubism 2（.model.json + .moc/.mtn）不被 cubism4 渲染栈支持：明确标注，别只留静态爪印。
+    const cubism2 = /\.model\.json$/i.test(entry.directoryPath ?? "") || /\.model\.json$/i.test(entry.modelUrl ?? "");
     return createElement(ModelRow, {
       key: entry.id,
       selected: view.config.model === entry.id,
-      label: `${entry.name}${flags ? ` · ${flags}` : ""}`,
+      label: `${entry.name}${flags ? ` · ${flags}` : ""}${cubism2 ? " · Cubism 2 模型不受支持" : ""}`,
       disabled: !writable,
       onSelect: () => write("model", entry.id),
       actions: createElement("span", null,

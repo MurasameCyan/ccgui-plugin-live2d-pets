@@ -291,7 +291,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       stop(): unknown
       maxFPS?: number
     }
-    renderer: { resize(width: number, height: number): unknown }
+    renderer: { resize(width: number, height: number): unknown; gl?: WebGLRenderingContext }
   } | null = null
   let model: ModelLike | null = null
   let hitAreas: string[] = []
@@ -302,6 +302,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // 模型基础尺寸（scale=1 时捕获一次；避免按当前 scale 累积误差）。
   let baseModelW = 0
   let baseModelH = 0
+  // 实测绘制区域（画布像素除以 scale 归一）：模型盒常远宽于实际绘制区域
+  // （Hiyori 实测仅占盒宽 35%），据其收紧画布后桌宠才能贴边（spec §4）。
+  let artMetrics: { w: number; h: number; cx: number; cy: number } | null = null
   // 尺寸变更合并：连续设置更新只落地最后一档，避免串行 WebGL resize。
   let pendingSize: number | null = null
   let sizeRaf = 0
@@ -328,9 +331,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let pos: DisplayLike = { right: 24, bottom: 20, size: 160 }
   // 帧率档（settings maxFps → ticker.maxFPS；0 = 不限制）
   let maxFps = DEFAULT_MAX_FPS
-  // 渲染开关：插件 enabled（配置）与页面可见性（spec §7）共同决定 ticker 是否运行
+  // 渲染开关：插件 enabled（配置）与页面可见性（spec §7）共同决定 ticker 是否运行；
+  // 用户可开启「窗口非激活时保持动态」忽略失焦/隐藏暂停。
   let enabled = true
   let hidden = document.visibilityState !== 'visible'
+  let keepAnimatingWhenInactive = false
   // 当前人设台词表（spec §3：内置常量 or 自定义 base 链合并；人设切换时热更新）
   let activePersonaId: string = DEFAULT_PERSONA_ID
   let activeCopy: CopyTable = resolvePersonaCopy(DEFAULT_PERSONA_ID, [])
@@ -340,7 +345,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   /** 合并 enabled/隐藏/失焦状态，启停渲染循环（spec §7：暂停渲染保留最后画面）。 */
   function syncTicker(): void {
     if (!app) return
-    const shouldRun = enabled && !hidden
+    const shouldRun = enabled && (keepAnimatingWhenInactive || !hidden)
     // Live2D owns a separate shared-ticker subscription; pause only this
     // model, never PIXI.Ticker.shared (which other plugins may also use).
     if (model) model.autoUpdate = shouldRun
@@ -597,19 +602,35 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     fallbackShown = false
   }
 
-  /**
-   * 按“size = canvas 宽度”的规则计算画布尺寸：
-   * 模型宽度撑满 size（留 8px 边距），高度按模型原始宽高比自适应。
-   */
+  /** 按“size = 画布宽度”的规则计算画布尺寸：
+   * 模型宽度撑满 size（留 8px 边距），高度按模型原始宽高比自适应。 */
   function modelCanvasSize(baseW: number, baseH: number, size: number): { width: number; height: number } {
     if (!(baseW > 0 && baseH > 0)) return { width: size, height: Math.round(size * 1.2) }
     const scale = (size - 8) / baseW
     return { width: size, height: Math.max(1, Math.round(baseH * scale + 8)) }
   }
 
-  /** 按当前尺寸重新适配模型（画布已就绪时调用；基准尺寸为 scale=1 时捕获值）。 */
+  /** 画布尺寸：有实测绘制区域时按绘制区域贴合（画布不再含大片透明空白），
+   * 否则退回模型盒宽高比。 */
+  function canvasSizeFor(size: number): { width: number; height: number } {
+    if (artMetrics) {
+      const s = (size - 8) / artMetrics.w
+      return { width: size, height: Math.max(1, Math.round(artMetrics.h * s) + 8) }
+    }
+    return modelCanvasSize(baseModelW, baseModelH, size)
+  }
+
+  /** 按当前尺寸重新适配模型（画布已就绪时调用；基准尺寸为 scale=1 时捕获值）。
+   * 有实测绘制区域时按绘制区域定 scale 与位置，画布右/下边缘即桌宠边缘。 */
   function fitModel(size: number): void {
     if (!model || !canvas) return
+    if (artMetrics) {
+      const s = (size - 8) / artMetrics.w
+      model.scale.set(s)
+      model.anchor.set(0.5, 0.5)
+      model.position.set(canvas.width / 2 - artMetrics.cx * s, canvas.height / 2 - artMetrics.cy * s)
+      return
+    }
     const w = baseModelW
     const h = baseModelH
     if (w > 0 && h > 0) {
@@ -620,10 +641,83 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     }
   }
 
+  /**
+   * 读取首帧帧缓冲量出实际绘制区域（画布像素）：模型盒可能远宽于绘制区域
+   * （Hiyori 实测仅占盒宽 35%），空白会在贴边时表现为“无法靠边”。
+   * 只执行一次/模型；失败时保持按模型盒的旧行为。
+   */
+  function measureArtBounds(scale: number): boolean {
+    const gl = app?.renderer?.gl
+    if (!gl || typeof gl.readPixels !== 'function' || !canvas) return false
+    const w = canvas.width
+    const h = canvas.height
+    if (!(w > 0 && h > 0) || !(scale > 0)) return false
+    const pixels = new Uint8Array(w * h * 4)
+    try {
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+    } catch {
+      return false
+    }
+    let minX = w
+    let maxX = -1
+    let minY = h
+    let maxY = -1
+    for (let y = 0; y < h; y += 1) {
+      const row = y * w * 4
+      // readPixels 原点在左下，换算成画布坐标
+      const canvasY = h - 1 - y
+      for (let x = 0; x < w; x += 1) {
+        if (pixels[row + x * 4 + 3] > 16) {
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (canvasY < minY) minY = canvasY
+          if (canvasY > maxY) maxY = canvasY
+        }
+      }
+    }
+    const artW = maxX - minX + 1
+    const artH = maxY - minY + 1
+    if (artW < 8 || artH < 8) return false
+    artMetrics = {
+      w: artW / scale,
+      h: artH / scale,
+      cx: ((minX + maxX + 1) / 2 - w / 2) / scale,
+      cy: ((minY + maxY + 1) / 2 - h / 2) / scale,
+    }
+    return true
+  }
+
+  /** 桌宠盒当前屏幕尺寸（画布位图尺寸优先；无画布时为降级爪印/尺寸档）。 */
+  function petBoxSize(): { w: number; h: number } {
+    if (canvas) return { w: canvas.width, h: canvas.height }
+    if (fallbackEl) return { w: 64, h: 64 }
+    return { w: Math.round(pos.size), h: Math.round(pos.size * 1.2) }
+  }
+
+  /** 把 right/bottom 钳制在视口内：桌宠可贴右/下边，但不能被拖出画面（spec §4）。 */
+  function clampDisplay(next: { right: number; bottom: number; size: number }): { right: number; bottom: number; size: number } {
+    const { w, h } = petBoxSize()
+    const maxRight = Math.max(0, window.innerWidth - w)
+    const maxBottom = Math.max(0, window.innerHeight - h)
+    return {
+      right: Math.min(Math.max(0, Math.round(next.right)), Math.round(maxRight)),
+      bottom: Math.min(Math.max(0, Math.round(next.bottom)), Math.round(maxBottom)),
+      size: next.size,
+    }
+  }
+
+  /** 应用钳制后的位置到锚点（画布尺寸变化/窗口缩放/拖动共用）。 */
+  function applyPosition(): void {
+    if (!box) return
+    pos = clampDisplay(pos)
+    box.style.right = `${pos.right}px`
+    box.style.bottom = `${pos.bottom}px`
+  }
+
   /** 立即应用画布尺寸（size 视为 canvas 宽度，高度按模型比例自适应）。 */
   function applySizeNow(nextSize: number): void {
     if (canvas && app) {
-      const canvasSize = modelCanvasSize(baseModelW, baseModelH, nextSize)
+      const canvasSize = canvasSizeFor(nextSize)
       canvas.width = canvasSize.width
       canvas.height = canvasSize.height
       try { app.renderer.resize(canvasSize.width, canvasSize.height) } catch { /* 旧渲染器 */ }
@@ -636,6 +730,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       pos.size = nextSize
       syncDebugPanelWidth()
       if (model) fitModel(nextSize)
+      // 画布尺寸变化会改变可停靠范围：重新钳制位置。
+      applyPosition()
     } else {
       pos.size = nextSize
     }
@@ -682,6 +778,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     hitAreas = []
     baseModelW = 0
     baseModelH = 0
+    artMetrics = null
     if (zoneOverlay && zoneOverlay.parentNode) zoneOverlay.parentNode.removeChild(zoneOverlay)
     zoneOverlay = null
     if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas)
@@ -705,7 +802,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     }
     try {
       petLayer = document.createElement('div')
-      petLayer.style.cssText = 'position:relative;display:inline-block;pointer-events:none'
+      // display:block：inline-block 的基线会让锚点底部多出约 6px 空白，桌宠无法真正贴底。
+      petLayer.style.cssText = 'position:relative;display:block;pointer-events:none'
       canvas = document.createElement('canvas')
       const size = pos.size
       canvas.width = size
@@ -797,10 +895,16 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       }
       refreshDebugMotionGroups()
       fitModel(pos.size)
-      // 首帧尺寸未知时延迟适配
-      if (!(baseModelW > 0 && baseModelH > 0)) {
-        try { app.ticker.addOnce(() => fitModel(pos.size)) } catch { /* 首帧适配 */ }
-      }
+      // 首帧尺寸未知时延迟适配；首帧后按实测绘制区域收紧画布（每模型一次）。
+      try {
+        app.ticker.addOnce(() => {
+          if (disposed || model !== loaded) return
+          if (!(baseModelW > 0 && baseModelH > 0)) fitModel(pos.size)
+          if (artMetrics) return
+          const scaleNow = baseModelW > 0 ? (pos.size - 8) / baseModelW : 0
+          if (measureArtBounds(scaleNow)) applySizeNow(pos.size)
+        })
+      } catch { /* 首帧适配 */ }
       if (lastState) playState(lastState)
       if (showSpatialZones) startZoneLoop()
 
@@ -809,8 +913,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       canvas.addEventListener('pointermove', handlePointerMove)
       canvas.addEventListener('pointerup', handlePointerUp)
       canvas.addEventListener('pointercancel', () => { down = null; dragging = false })
-    } catch {
-      // 加载失败 → 静态头像（spec §7）；已卸载则不再展示
+    } catch (error) {
+      // 加载失败 → 静态头像（spec §7）；已卸载则不再展示。
+      // 失败原因必须可见：静默降级会让“模型无法加载”无从排查。
+      console.warn('[live2d-pets] 模型加载失败:', url, error)
       teardownLayer()
       if (!disposed) showFallback()
     }
@@ -1094,6 +1200,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     // 开关：显示/隐藏 + 暂停/恢复渲染循环（syncTicker 合并隐藏/失焦状态，spec §7）
     if (box) box.style.display = cfg.enabled ? '' : 'none'
     enabled = cfg.enabled
+    keepAnimatingWhenInactive = cfg.keepAnimatingWhenInactive
     syncTicker()
     // 开发者总开关关闭时，调试面板与分区叠加均必须零渲染。
     ensureDebugPanel(cfg.developerMode && cfg.debug)
@@ -1132,10 +1239,13 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       if (bubble) bubble.style.opacity = '0'
     }
     if (dragging && box) {
-      pos.right = Math.max(0, down.startRight - dx)
-      pos.bottom = Math.max(0, down.startBottom - dy)
-      box.style.right = `${Math.round(pos.right)}px`
-      box.style.bottom = `${Math.round(pos.bottom)}px`
+      pos = clampDisplay({
+        right: down.startRight - dx,
+        bottom: down.startBottom - dy,
+        size: pos.size,
+      })
+      box.style.right = `${pos.right}px`
+      box.style.bottom = `${pos.bottom}px`
     }
   }
   function handlePointerUp(e: PointerEvent): void {
@@ -1227,11 +1337,18 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       // 2. Pointer-transparent anchor inside the host's viewport overlay.
       box = anchor;
       box.style.cssText = `position:absolute;inset:auto;top:auto;left:auto;right:${pos.right}px;bottom:${pos.bottom}px;margin:0;padding:0;border:none;background:transparent;width:auto;height:auto;overflow:visible;pointer-events:none`;
+      // 恢复的坐标可能来自更宽的窗口/更早的版本：先钳制进当前视口。
+      applyPosition();
 
       // 气泡层
       bubble = document.createElement('div')
       bubble.style.cssText = 'position:absolute;left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:8px;padding:4px 10px;background:rgba(255,255,255,.95);color:#222;border-radius:999px;font:12px/1.5 sans-serif;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none'
       box.appendChild(bubble)
+
+      // 窗口缩放后视口边界变化：重新钳制位置，避免桌宠留在画面外（spec §4）。
+      const onViewportResize = (): void => { if (!dragging) applyPosition() }
+      window.addEventListener('resize', onViewportResize)
+      pushCleanup(() => window.removeEventListener('resize', onViewportResize))
 
       // Subscribe before any asset await. Position, visibility and state must
       // remain reactive during loading and after a vendor/model failure.
@@ -1241,7 +1358,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         // A runtime event must not replace unsaved coordinates mid-drag.
         // Rendering size stays local until applyConfig schedules its update.
         if (!dragging) {
-          pos = { right: next.display.right, bottom: next.display.bottom, size: pos.size }
+          pos = clampDisplay({ right: next.display.right, bottom: next.display.bottom, size: pos.size })
           if (box) {
             box.style.right = `${pos.right}px`
             box.style.bottom = `${pos.bottom}px`

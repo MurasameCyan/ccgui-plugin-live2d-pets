@@ -46,6 +46,7 @@ async function mountPet(options: {
   vendor?: "ready" | "pending" | "failed";
   model?: ReturnType<typeof makeModel>;
   modelReady?: Promise<void>;
+  gl?: unknown;
 } = {}) {
   const harness = makeContext();
   const id = ++mountId;
@@ -88,7 +89,7 @@ async function mountPet(options: {
     Application: class {
       stage = { addChild: vi.fn() };
       ticker = ticker;
-      renderer = { resize: vi.fn() };
+      renderer = { resize: vi.fn(), gl: options.gl };
       destroy = destroy;
       constructor() { tickerRunning = true; }
     },
@@ -170,6 +171,71 @@ describe("pet overlay display lifecycle", () => {
     expect(runtime.snapshot().config.size).toBe(240);
     expect(anchor.querySelector("canvas")?.width).toBe(240);
     expect(await ctx.storage.get("display")).toMatchObject({ right: 24, bottom: 20 });
+  });
+
+  it("keeps the pet inside the viewport when dragged, and docks at the edges", async () => {
+    const { anchor } = await mountPet();
+    const canvas = anchor.querySelector("canvas")!;
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // 大幅向左上拖动：不得越出画面（right ≤ 视口宽 - 画布宽）。
+    pointer(canvas, "pointerdown", 500, 500);
+    pointer(canvas, "pointermove", -200, -200);
+    expect(anchor.style.right).toBe(`${window.innerWidth - width}px`);
+    expect(anchor.style.bottom).toBe(`${window.innerHeight - height}px`);
+
+    // 向右下拖动：贴住右/下边（right/bottom = 0）。
+    pointer(canvas, "pointerdown", 0, 0);
+    pointer(canvas, "pointermove", 1200, 1200);
+    expect(anchor.style.right).toBe("0px");
+    expect(anchor.style.bottom).toBe("0px");
+    await act(async () => { pointer(canvas, "pointerup", 1200, 1200); });
+  });
+
+  it("shrinks the canvas to the drawn area after the first frame", async () => {
+    const canvasW = 240;
+    const canvasH = 472;
+    const gl = {
+      RGBA: 6408,
+      UNSIGNED_BYTE: 5121,
+      readPixels: (_x: number, _y: number, w: number, h: number, _f: number, _t: number, pixels: Uint8Array) => {
+        // 画布坐标 x 100..139, y 200..299（GL 原点在左下）。
+        for (let y = 0; y < h; y += 1) {
+          const canvasY = h - 1 - y;
+          if (canvasY < 200 || canvasY > 299) continue;
+          for (let x = 100; x <= 139; x += 1) pixels[(y * w + x) * 4 + 3] = 255;
+        }
+      },
+    };
+    const model = makeModel();
+    const { anchor, ticker } = await mountPet({ gl, model });
+    const canvas = anchor.querySelector("canvas")!;
+    expect(canvas.width).toBe(canvasW);
+    expect(canvas.height).toBe(canvasH);
+
+    const frame = ticker.addOnce.mock.calls.at(-1)?.[0] as () => void;
+    await act(async () => { frame(); });
+
+    // 尺寸语义：size = 可见宽度。绘制区域 40x100px 撑满后 canvas 约 240x588，
+    // 模型按绘制区域居中（水平居中、垂直按下缘偏移微调）。
+    expect(canvas.width).toBe(canvasW);
+    expect(canvas.height).toBe(588);
+    const [px, py] = model.position.set.mock.calls.at(-1) as [number, number];
+    expect(Math.round(px)).toBe(120);
+    expect(Math.round(py)).toBe(213);
+  });
+
+  it("keeps animating while the window is inactive only when the switch is on", async () => {
+    const off = await mountPet();
+    await act(async () => { window.dispatchEvent(new Event("blur")); });
+    expect(off.isTicking()).toBe(false);
+
+    const on = await mountPet({ config: { keepAnimatingWhenInactive: true } });
+    await act(async () => { window.dispatchEvent(new Event("blur")); });
+    expect(on.isTicking()).toBe(true);
+    await act(async () => { await on.runtime.setSettings([{ op: "set", path: ["keepAnimatingWhenInactive"], value: false }]); });
+    expect(on.isTicking()).toBe(false);
   });
 
   it("keeps live drag coordinates across unrelated host events and saves the drop", async () => {

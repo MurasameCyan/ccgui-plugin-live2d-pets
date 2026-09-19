@@ -27,6 +27,7 @@ export interface PetConfig {
   debug: boolean;
   showTapZones: boolean;
   persona: string;
+  keepAnimatingWhenInactive: boolean;
 }
 export interface PetStateView {
   state: PetState;
@@ -56,9 +57,11 @@ const DEFAULT_CONFIG: PetConfig = {
   debug: false,
   showTapZones: false,
   persona: DEFAULT_PERSONA_ID,
+  keepAnimatingWhenInactive: false,
 };
 const CONFIG_KEYS: readonly (keyof PetConfig)[] = [
   "enabled", "size", "maxFps", "model", "developerMode", "debug", "showTapZones", "persona",
+  "keepAnimatingWhenInactive",
 ];
 const DONE_HOLD_MS = 3500;
 const PERSONAS_FILE = "personas.jsonc";
@@ -88,6 +91,7 @@ function normalizeConfig(value: unknown): PetConfig {
     debug: raw.debug === true,
     showTapZones: raw.showTapZones === true,
     persona: typeof raw.persona === "string" && raw.persona.trim() ? raw.persona.trim() : DEFAULT_CONFIG.persona,
+    keepAnimatingWhenInactive: raw.keepAnimatingWhenInactive === true,
   };
 }
 function isTerminal(event: AfterTurnEvent): boolean {

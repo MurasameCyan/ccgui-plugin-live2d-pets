@@ -175,6 +175,27 @@ describe("pet settings model sources", () => {
     expect(menu.style.top).toBe("");
   });
 
+  it("toggles keeping the pet animated while the window is inactive", async () => {
+    const { container, runtime } = await mountSettings();
+    const label = [...container.querySelectorAll("label")].find((node) => (node.textContent || "").includes("窗口非激活时保持动态"));
+    expect(label, "inactive-animation toggle").toBeDefined();
+    const checkbox = label!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(checkbox.checked).toBe(false);
+
+    await act(async () => { checkbox.click(); await Promise.resolve(); });
+    expect(runtime.snapshot().config.keepAnimatingWhenInactive).toBe(true);
+  });
+
+  it("marks Cubism 2 model entries as unsupported", async () => {
+    const legacy: CustomModelEntry = {
+      id: "legacy-pet", name: "Legacy", modelUrl: "C:/legacy",
+      directoryGrantId: "grant", directoryPath: "Bronya.model.json",
+    };
+    const { container } = await mountSettings([legacy]);
+    const rows = customRows(container);
+    expect(rows.textContent).toContain("Cubism 2 模型不受支持");
+  });
+
   it("adds a granted directory model and retains its selected source after reload", async () => {
     const { container, runtime, savedModels, ctx, unmount } = await mountSettings();
     await fillLocalDraft(container);
