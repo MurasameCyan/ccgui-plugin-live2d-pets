@@ -197,7 +197,7 @@ function pointer(target: HTMLCanvasElement, type: string, x: number, y: number) 
 }
 
 /** 预热：隐藏画布累积绘制区域样本后才定形并显示，需要跑若干帧。 */
-async function settle(harness: { frame: () => void }, frames = 9): Promise<void> {
+async function settle(harness: { frame: () => void }, frames = 24): Promise<void> {
   await act(async () => { for (let index = 0; index < frames; index += 1) harness.frame(); });
 }
 

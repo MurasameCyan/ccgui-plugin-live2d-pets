@@ -83,9 +83,9 @@ const DEFAULT_MAX_FPS = 30
  */
 const TICKER_PRIORITY_UTILITY = -50
 /** 预热采样：出现前隐藏画布累积样本，避免桌宠出现后再改尺寸（出现即定形）。 */
-const ART_WARMUP_SAMPLES = 4
+const ART_WARMUP_SAMPLES = 10
 /** 预热最长帧数：贴图或 WebGL 回读异常时桌宠也要出现。 */
-const ART_WARMUP_TICKS = 24
+const ART_WARMUP_TICKS = 40
 /** 预热期间的采样间隔（每 N 帧读一次帧缓冲）。 */
 const ART_SAMPLE_EVERY = 2
 /** 预热后的看门狗间隔（每 N 帧读一次）：迟到的动作姿势只扩画布，不改缩放。 */
