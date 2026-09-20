@@ -160,6 +160,27 @@ describe("pet settings model sources", () => {
     expect(container.querySelector('[role="listbox"]')).toBeNull();
   });
 
+  it("coalesces rapid size slider changes into one trailing write", async () => {
+    vi.useFakeTimers();
+    const { container, runtime } = await mountSettings();
+    const input = container.querySelector<HTMLInputElement>('input[type="range"]')!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    const setSettings = vi.spyOn(runtime, "setSettings");
+
+    await act(async () => {
+      for (const value of [320, 300, 280]) {
+        setValue.call(input, String(value));
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+    await act(async () => { vi.advanceTimersByTime(180); await Promise.resolve(); });
+
+    expect(setSettings).toHaveBeenCalledTimes(1);
+    expect(setSettings).toHaveBeenLastCalledWith([{ op: "set", path: ["size"], value: 280 }]);
+    expect(runtime.snapshot().config.size).toBe(280);
+    vi.useRealTimers();
+  });
+
   it("scrolls a long persona menu and flips it above the trigger near the viewport edge", async () => {
     const personas = Array.from({ length: 20 }, (_, index) => ({ id: `custom-${index}`, name: `自定义人设 ${index}`, base: "tsundere" }));
     const { container } = await mountSettings([], undefined, personas);

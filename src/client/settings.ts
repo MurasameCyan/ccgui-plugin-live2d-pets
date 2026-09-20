@@ -28,6 +28,7 @@ type DraftSetter = (value: MotionMap | ((current: MotionMap) => MotionMap)) => v
 type SpatialSetter = (value: SpatialTapDraft | ((current: SpatialTapDraft) => SpatialTapDraft)) => void;
 type EditorPanel = "spatial" | "motion" | null;
 type MotionStatus = "idle" | "loading" | "ready" | "error";
+const SIZE_WRITE_DEBOUNCE_MS = 120;
 
 const buttonStyle = {
   marginLeft: 6,
@@ -402,12 +403,12 @@ function ModelRow(props: {
     props.actions,
   );
 }
-
 export function PetSettingsSection(props: PetSettingsProps): ReactNode {
   const { runtime } = props;
   const initial = runtime.snapshot();
   const [view, setView] = useState<PetStateView>(initial);
   const viewRef = useRef(initial);
+  const [sizeDraft, setSizeDraft] = useState(initial.config.size);
   const [notice, setNotice] = useState<string | null>(null);
   const [personaFallback, setPersonaFallback] = useState(false);
   const [newName, setNewName] = useState("");
@@ -432,6 +433,8 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
   const [editMotionStatus, setEditMotionStatus] = useState<MotionStatus>("idle");
   const [editPanel, setEditPanel] = useState<EditorPanel>(null);
   const writeQueue = useRef(Promise.resolve());
+  const sizeWriteTimer = useRef<number | undefined>(undefined);
+  const pendingSize = useRef<number | null>(null);
   const modelQueue = useRef(Promise.resolve());
   const modelsRef = useRef(view.customModels);
   const directoryRequests = useRef({ new: 0, edit: 0 });
@@ -439,6 +442,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
   const syncView = (next: PetStateView): void => {
     viewRef.current = next;
     modelsRef.current = next.customModels;
+    if (sizeWriteTimer.current === undefined && pendingSize.current === null) setSizeDraft(next.config.size);
     setView(next);
   };
 
@@ -446,6 +450,9 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     const unsubscribe = runtime.subscribe((next) => syncView(next));
     return () => {
       unsubscribe();
+      if (sizeWriteTimer.current !== undefined) window.clearTimeout(sizeWriteTimer.current);
+      sizeWriteTimer.current = undefined;
+      pendingSize.current = null;
       directoryRequests.current.new += 1;
       directoryRequests.current.edit += 1;
     };
@@ -459,6 +466,18 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
         setNotice(`设置保存失败：${error instanceof Error ? error.message : String(error)}`);
       }
     });
+  };
+
+  const scheduleSizeWrite = (value: number): void => {
+    setSizeDraft(value);
+    pendingSize.current = value;
+    if (sizeWriteTimer.current !== undefined) window.clearTimeout(sizeWriteTimer.current);
+    sizeWriteTimer.current = window.setTimeout(() => {
+      sizeWriteTimer.current = undefined;
+      const next = pendingSize.current;
+      pendingSize.current = null;
+      if (next !== null) write("size", next);
+    }, SIZE_WRITE_DEBOUNCE_MS);
   };
 
   const saveModels = (compose: (current: CustomModelEntry[]) => CustomModelEntry[]): void => {
@@ -648,8 +667,8 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       ),
       createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10 } },
         "尺寸",
-        createElement("input", { type: "range", min: 40, max: 400, value: view.config.size, disabled: !writable, onChange: (event: Event) => write("size", Number((event.currentTarget as HTMLInputElement).value)), style: { flex: 1 } }),
-        `${view.config.size}px`,
+        createElement("input", { type: "range", min: 40, max: 400, value: sizeDraft, disabled: !writable, onChange: (event: Event) => scheduleSizeWrite(Number((event.currentTarget as HTMLInputElement).value)), style: { flex: 1 } }),
+        `${sizeDraft}px`,
       ),
       createElement("div", { style: { marginTop: 10 } }, "渲染帧率：", ...([30, 60, 0] as const).map((fps) => createElement("button", { key: fps, type: "button", style: { ...buttonStyle, marginLeft: 0, marginRight: 6 }, onClick: () => write("maxFps", fps) }, view.config.maxFps === fps ? `✓ ${fps || "不限制"}` : String(fps || "不限制")))),
     ),
