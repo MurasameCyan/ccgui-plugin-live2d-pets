@@ -88,7 +88,7 @@ const ART_WARMUP_SAMPLES = 10
 const ART_WARMUP_TICKS = 40
 /** 预热期间的采样间隔（每 N 帧读一次帧缓冲）。 */
 const ART_SAMPLE_EVERY = 2
-/** 预热后的看门狗间隔（每 N 帧读一次）：迟到的动作姿势只扩画布，不改缩放。 */
+/** 预热后的看门狗间隔（每 N 帧读一次）：只记录迟到姿势，不在运行中改布局。 */
 const ART_WATCHDOG_EVERY = 30
 /** 采样包围盒贴到画布边缘时的外扩量（画布像素）：说明测量被画布截断。 */
 const ART_EDGE_MARGIN_PX = 12
@@ -284,7 +284,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     pendingSize = null
   })
   pushCleanup(() => { stopZoneLoop(); showSpatialZones = false })
-  pushCleanup(() => teardownLayer())
+  pushCleanup(() => { closeContextMenu(); teardownLayer() })
 
   let box: HTMLDivElement | null = null
   let bubble: HTMLDivElement | null = null
@@ -328,16 +328,17 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let vendorsReady = false
   let fallbackShown = false
   let fallbackEl: HTMLDivElement | null = null
+  let contextMenu: HTMLDivElement | null = null
   // 模型基础尺寸（scale=1 时捕获一次；避免按当前 scale 累积误差）。
   let baseModelW = 0
   let baseModelH = 0
-  // 实测绘制区域：artRef 是缩放基准（预热结束时冻结，之后动作再大也不改缩放），
-  // artUnion 是覆盖范围（只增不减，只用来保证画布装得下动作）。
+  // 实测绘制区域：artRef 是缩放基准（预热结束时冻结），artUnion 记录后续姿势覆盖范围，
+  // 但运行中不据此改画布；下一次尺寸变更或刷新模型时统一应用。
   let artRef: { w: number; h: number; cx: number; cy: number } | null = null
   let artUnion: { x0: number; x1: number; y0: number; y1: number } | null = null
   /** 最近一次适配使用的 scale：读取帧缓冲时把画布像素换算回模型单位。 */
   let artScale = 0
-  /** 模型原点在画布坐标中的位置（画布右/下锚定，扩画布时要同步平移）。 */
+  /** 模型原点在画布坐标中的位置，用于把后续采样换算回模型单位。 */
   let modelOrigin = { x: 0, y: 0 }
   /** 摘除跨帧绘制区域测量（模型切换/卸载时必须停掉，否则 ticker 一直重试）。 */
   let detachArtMeasure: (() => void) | null = null
@@ -722,8 +723,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     syncDebugPanelWidth()
   }
 
-  /** 按当前尺寸与覆盖范围适配模型：缩放由冻结基准决定，模型钉在画布右/下边
-   * （画布在视口里右/下锚定，之后扩画布只向上/左延伸，视觉位置不变）。 */
+  /** 按当前尺寸与覆盖范围适配模型：缩放由冻结基准决定，模型钉在画布右/下边；
+   * 运行中不再因迟到姿势改画布或模型位置，尺寸变更/刷新时统一重新适配。 */
   function fitModel(): void {
     if (!model || !canvas) return
     const base = artBase()
@@ -742,36 +743,6 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     modelOrigin = { x: originX, y: originY }
   }
 
-  /** 覆盖范围变大时只扩画布（必要时把模型整体左/上移），**绝不改缩放**：
-   * 动作再多也不会让桌宠突然变小（spec §4）。 */
-  function growCanvasForArt(): void {
-    if (!canvas || !model || !artUnion || !(artScale > 0)) return
-    const scale = artScale
-    const half = ART_PADDING / 2
-    let width = canvas.width
-    let height = canvas.height
-    let shiftX = 0
-    let shiftY = 0
-    // 右/下越界：画布右/下边锚定在视口上，只能把模型整体左/上移。
-    const right = modelOrigin.x + artUnion.x1 * scale
-    const bottom = modelOrigin.y - artUnion.y0 * scale
-    if (right + half > width) shiftX = -(right + half - width)
-    if (bottom + half > height) shiftY = -(bottom + half - height)
-    // 左/上越界：扩画布（画布右/下锚定 → 新增区域在左/上）。
-    const left = modelOrigin.x + artUnion.x0 * scale + shiftX
-    const top = modelOrigin.y - artUnion.y1 * scale + shiftY
-    const growX = Math.max(0, Math.ceil(half - left))
-    const growY = Math.max(0, Math.ceil(half - top))
-    if (!shiftX && !shiftY && !growX && !growY) return
-    width += growX
-    height += growY
-    resizeCanvas(width, height)
-    // 画布像素原点随之向左/上移动：模型画布坐标要加上增长量，视觉位置才不变。
-    const originX = modelOrigin.x + shiftX + growX
-    const originY = modelOrigin.y + shiftY + growY
-    model.position.set(originX, originY)
-    modelOrigin = { x: originX, y: originY }
-  }
 
   /** 采样一帧帧缓冲并入覆盖范围（并集，只增不减）；返回 true 表示覆盖变大。 */
   function sampleArtBounds(scale: number): boolean {
@@ -1062,7 +1033,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       fitModel()
       // 绘制区域采样必须排在渲染之后：PIXI 把 render 挂在 LOW(-25)，
       // 用默认 NORMAL(0) 的回调会在首帧渲染前读到空帧缓冲（实测 alpha 全 0）。
-      // 预热阶段隐藏画布累积样本 → 冻结缩放基准 → 显示；之后覆盖变大只扩画布。
+      // 预热阶段隐藏画布累积样本 → 冻结缩放基准 → 显示；之后只记录覆盖范围，
+      // 不在动画运行中重设画布或模型位置，避免尺寸调整完成后继续抽动。
       try {
         let warmTicks = 0
         let samples = 0
@@ -1086,10 +1058,6 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
             const grew = sampleArtBounds(scaleNow)
             samples += 1
             settled = grew ? 0 : settled + 1
-            if (revealed) {
-              // 迟到的动作姿势：只扩画布、不动缩放，桌宠不会突然变小。
-              if (grew) growCanvasForArt()
-            }
           }
           if (!revealed) {
             if ((samples > 0 && settled >= ART_WARMUP_SAMPLES) || warmTicks >= ART_WARMUP_TICKS) reveal()
@@ -1119,6 +1087,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       canvas.addEventListener('pointerdown', handlePointerDown)
       canvas.addEventListener('pointermove', handlePointerMove)
       canvas.addEventListener('pointerup', handlePointerUp)
+      canvas.addEventListener('contextmenu', handleCanvasContextMenu)
       canvas.addEventListener('pointercancel', () => { down = null; dragging = false })
     } catch (error) {
       // 加载失败 → 静态头像（spec §7）；已卸载则不再展示。
@@ -1133,6 +1102,70 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let modelLoadQueue: Promise<void> = Promise.resolve()
   function queueModelLoad(url: string | null): void {
     modelLoadQueue = modelLoadQueue.then(() => loadModelLayer(url)).catch(() => {})
+  }
+
+  function closeContextMenu(): void {
+    if (!contextMenu) return
+    contextMenu.remove()
+    contextMenu = null
+    document.removeEventListener('pointerdown', dismissContextMenu, true)
+    document.removeEventListener('keydown', dismissContextMenuOnEscape, true)
+  }
+
+  function dismissContextMenu(event: PointerEvent): void {
+    const target = event.target
+    if (contextMenu && target instanceof Node && !contextMenu.contains(target)) closeContextMenu()
+  }
+
+  function dismissContextMenuOnEscape(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || !contextMenu) return
+    event.preventDefault()
+    closeContextMenu()
+  }
+
+  function openContextMenu(clientX: number, clientY: number): void {
+    closeContextMenu()
+    if (!box) return
+    const menu = document.createElement('div')
+    menu.setAttribute('role', 'menu')
+    menu.setAttribute('aria-label', '桌宠菜单')
+    menu.style.cssText = 'position:fixed;z-index:100;min-width:132px;padding:4px;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(30,32,40,.98);box-shadow:0 6px 20px rgba(0,0,0,.38);pointer-events:auto'
+    const addItem = (label: string, action: () => void): void => {
+      const item = document.createElement('button')
+      item.type = 'button'
+      item.setAttribute('role', 'menuitem')
+      item.textContent = label
+      item.style.cssText = 'display:block;width:100%;padding:7px 10px;border:0;border-radius:5px;background:transparent;color:#f2f3f5;text-align:left;font:13px/1.4 sans-serif;cursor:pointer'
+      item.onmouseenter = () => { item.style.background = 'rgba(120,170,255,.22)' }
+      item.onmouseleave = () => { item.style.background = 'transparent' }
+      item.onclick = () => action()
+      menu.appendChild(item)
+    }
+    addItem('刷新宠物', () => {
+      closeContextMenu()
+      if (vendorsReady && currentModelUrl) queueModelLoad(currentModelUrl)
+    })
+    addItem('关闭宠物', () => {
+      closeContextMenu()
+      void runtime.setSettings([{ op: 'set', path: ['enabled'], value: false }]).catch(() => {})
+    })
+    const menuWidth = 148
+    const menuHeight = 76
+    const padding = 8
+    const left = Math.min(Math.max(padding, clientX), Math.max(padding, window.innerWidth - menuWidth - padding))
+    const top = Math.min(Math.max(padding, clientY), Math.max(padding, window.innerHeight - menuHeight - padding))
+    menu.style.left = `${left}px`
+    menu.style.top = `${top}px`
+    box.appendChild(menu)
+    contextMenu = menu
+    document.addEventListener('pointerdown', dismissContextMenu, true)
+    document.addEventListener('keydown', dismissContextMenuOnEscape, true)
+  }
+
+  function handleCanvasContextMenu(event: MouseEvent): void {
+    event.preventDefault()
+    event.stopPropagation()
+    openContextMenu(event.clientX, event.clientY)
   }
 
   /** 停止空间分区分帧重绘。 */
@@ -1406,6 +1439,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     const cfg = next.config
     // 开关：显示/隐藏 + 暂停/恢复渲染循环（syncTicker 合并隐藏/失焦状态，spec §7）
     if (box) box.style.display = cfg.enabled ? '' : 'none'
+    if (!cfg.enabled) closeContextMenu()
     enabled = cfg.enabled
     keepAnimatingWhenInactive = cfg.keepAnimatingWhenInactive
     syncTicker()
@@ -1433,6 +1467,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let dragging = false
 
   function handlePointerDown(e: PointerEvent): void {
+    if (e.button !== 0) return
     down = { x: e.clientX, y: e.clientY, startRight: pos.right, startBottom: pos.bottom }
     dragging = false
     canvas?.setPointerCapture(e.pointerId)
@@ -1456,6 +1491,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     }
   }
   function handlePointerUp(e: PointerEvent): void {
+    if (e.button !== 0) { down = null; dragging = false; return }
     if (!down) return
     if (dragging) {
       void runtime.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {});

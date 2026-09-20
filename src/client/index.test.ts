@@ -528,25 +528,80 @@ describe("pet overlay display lifecycle", () => {
     expect(canvas.width).toBeGreaterThan(40);
   });
 
-  it("grows the canvas for a later pose without ever changing the model scale", async () => {
+  it("does not mutate layout when a later pose expands beyond the fitted canvas", async () => {
     const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
     const model = makeModel();
     const harness = await mountPet({ art, model });
     await settle(harness);
     const canvas = harness.anchor.querySelector("canvas")!;
     const fitted = { width: canvas.width, height: canvas.height };
-    expect(fitted).toEqual({ width: 240, height: 588 });
     const scaleCalls = model.scale.set.mock.calls.length;
+    const positionCalls = model.position.set.mock.calls.length;
 
-    // 动作把绘制区域撑到画布边缘：只扩画布，缩放必须保持不变（桌宠不会突然变小）。
-    art.x0 = 0; art.x1 = 239; art.y0 = 0; art.y1 = 587;
+    // 迟到的动作姿态不能在已显示的桌宠上触发 resize、scale 或 position 写入。
+    art.x0 = 0;
+    art.x1 = canvas.width - 1;
+    art.y0 = 0;
+    art.y1 = canvas.height - 1;
     await settle(harness, 40);
 
     expect(model.scale.set.mock.calls.length).toBe(scaleCalls);
-    expect(canvas.width).toBeGreaterThanOrEqual(fitted.width);
-    expect(canvas.height).toBeGreaterThanOrEqual(fitted.height);
-    expect(canvas.width > fitted.width || canvas.height > fitted.height).toBe(true);
+    expect(model.position.set.mock.calls.length).toBe(positionCalls);
+    expect({ width: canvas.width, height: canvas.height }).toEqual(fitted);
   });
+  it("keeps the model transform and canvas stable after a size change", async () => {
+    const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
+    const model = makeModel();
+    const harness = await mountPet({ art, model });
+    await settle(harness);
+
+    let raf: FrameRequestCallback | null = null;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => { raf = callback; return 1; });
+    await act(async () => {
+      await harness.runtime.setSettings([{ op: "set", path: ["size"], value: 300 }]);
+      raf?.(0);
+    });
+
+    const positionCalls = model.position.set.mock.calls.length;
+    const scaleCalls = model.scale.set.mock.calls.length;
+    const canvas = harness.anchor.querySelector("canvas")!;
+    const canvasSize = { width: canvas.width, height: canvas.height };
+    art.x0 = 0;
+    art.x1 = canvas.width - 1;
+    art.y0 = 0;
+    art.y1 = canvas.height - 1;
+    await settle(harness, 40);
+
+    expect(model.position.set.mock.calls.length).toBe(positionCalls);
+    expect(model.scale.set.mock.calls.length).toBe(scaleCalls);
+    expect({ width: canvas.width, height: canvas.height }).toEqual(canvasSize);
+  });
+
+  it("replaces the browser image menu with refresh and close actions", async () => {
+    const { runtime, anchor, modelCanvas, loadModel, ctx } = await mountPet();
+    const canvas = modelCanvas()!;
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 80, button: 2 });
+
+    canvas.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    const menu = anchor.querySelector('[role="menu"]')!;
+    expect([...menu.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["刷新宠物", "关闭宠物"]);
+
+    await act(async () => { (menu.querySelector("button") as HTMLButtonElement).click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(loadModel).toHaveBeenCalledTimes(2);
+    expect(anchor.querySelector('[role="menu"]')).toBeNull();
+
+    const refreshedCanvas = modelCanvas()!;
+    refreshedCanvas.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 80, button: 2 }));
+    const closeMenu = anchor.querySelector('[role="menu"]')!;
+    await act(async () => { (closeMenu.querySelectorAll("button")[1] as HTMLButtonElement).click(); });
+    expect(runtime.snapshot().config.enabled).toBe(false);
+    expect(await ctx.storage.get("config")).toMatchObject({ enabled: false });
+    expect(anchor.querySelector('[role="menu"]')).toBeNull();
+  });
+
 
   it("expands the canvas when the drawn area reaches a canvas edge", async () => {
     // 顶部贴边的绘制区域说明测量被画布截断，需要外扩后重新定形。
