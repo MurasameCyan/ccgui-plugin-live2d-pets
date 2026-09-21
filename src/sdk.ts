@@ -1,3 +1,9 @@
+/**
+ * Minimal local mirror of the host SDK contract used by this standalone
+ * plugin. Keep signatures in sync with packages/plugin-sdk/src/context.ts.
+ *
+ * @ccgui/plugin-sdk mirror v0.3.12
+ */
 export type Disposer = () => void;
 export type ReactNode = unknown;
 export type DocumentStorageLocationKind = "data" | "program" | "custom";

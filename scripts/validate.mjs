@@ -20,7 +20,48 @@ const requiredPermissions = [
 
 if (!/^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/.test(manifest.id)) throw new Error(`invalid plugin id: ${manifest.id}`);
 if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error(`invalid plugin version: ${manifest.version}`);
-if (manifest.sdkVersion !== "^0.4.3") throw new Error(`unsupported sdkVersion: ${manifest.sdkVersion}`);
+if (!/^\d+\.\d+\.\d+$/.test(manifest.sdkVersion)) {
+  throw new Error(`sdkVersion must be an exact x.y.z pin (no ^/~/>=/*/x), got ${JSON.stringify(manifest.sdkVersion)}`);
+}
+// The compat line froze at an exact SDK value; the mirror stamp and the
+// pinned manifest must agree, and the mirrored PluginContext key set is
+// frozen so a later host sync that drops or renames a top-level capability
+// trips CI here instead of silently diverging from the contract we pin.
+const sdkSource = readFileSync(resolve(root, "src/sdk.ts"), "utf8");
+const sdkStamp = sdkSource.match(/@ccgui\/plugin-sdk mirror v(\d+\.\d+\.\d+)/);
+if (!sdkStamp) throw new Error("src/sdk.ts is missing its `@ccgui/plugin-sdk mirror v<x.y.z>` stamp");
+if (sdkStamp[1] !== manifest.sdkVersion) {
+  throw new Error(`src/sdk.ts stamp v${sdkStamp[1]} != manifest.sdkVersion ${manifest.sdkVersion}`);
+}
+const expectedContextKeys = [
+  "pluginId", "version", "react", "hooks", "documentStorage", "assets",
+  "shell", "ui", "theme", "i18n", "storage", "events", "host",
+].sort();
+const ctxOpen = sdkSource.indexOf("export interface PluginContext {");
+if (ctxOpen < 0) throw new Error("src/sdk.ts does not declare `export interface PluginContext`");
+const ctxKeys = new Set();
+let ctxDepth = 0;
+let ctxSeen = false;
+for (const raw of sdkSource.slice(ctxOpen).split("\n")) {
+  if (ctxSeen && ctxDepth === 1) {
+    const member = raw.match(/^\s{2}([A-Za-z][A-Za-z0-9]*)\??\s*[:(]/);
+    if (member) ctxKeys.add(member[1]);
+  }
+  for (const ch of raw) {
+    if (ch === "{") { ctxDepth++; ctxSeen = true; }
+    else if (ch === "}") { ctxDepth--; }
+  }
+  if (ctxSeen && ctxDepth === 0) break;
+}
+const ctxMissing = expectedContextKeys.filter((k) => !ctxKeys.has(k));
+const ctxExtra = [...ctxKeys].filter((k) => !expectedContextKeys.includes(k));
+if (ctxMissing.length || ctxExtra.length) {
+  throw new Error(
+    `PluginContext top-level keys drifted from the frozen mirror.` +
+      (ctxMissing.length ? ` missing: ${ctxMissing.join(", ")}.` : "") +
+      (ctxExtra.length ? ` unexpected: ${ctxExtra.join(", ")}.` : ""),
+  );
+}
 for (const permission of requiredPermissions) {
   if (!manifest.permissions.includes(permission)) throw new Error(`manifest missing permission: ${permission}`);
 }

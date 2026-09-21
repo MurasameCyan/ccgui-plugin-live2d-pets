@@ -20,7 +20,7 @@ CC GUI 的 Live2D 桌宠插件：镜像当前 AI 会话状态，支持分部位�
 
 ## CC GUI 安装
 
-宿主需要 **Plugin SDK 0.4.3 或兼容的 0.4.x 版本**（manifest 声明 `^0.4.3`）。`ui:overlay`、资源桥和回合开始 hook 均从 0.4.3 提供；仅应用版本号满足最低要求还不够。跟随当前激活会话依赖宿主话题 `session://activated`（manifest 已声明 `events` 权限），缺少该权限的旧宿主仍可用，只是不再跟随会话切换。
+宿主需要 **Plugin SDK 0.3.12**（manifest 精确声明 `sdkVersion: "0.3.12"`，不用 `^`/`>=`）。该兼容线以 `0.3.12` 重新编号，承载 CCB + Live2D 的通用能力：`ui:overlay`、资源桥和回合开始 hook 均在其中提供；宿主 SDK 版本不匹配时插件管理会拒绝加载，仅应用版本号满足最低要求还不够。跟随当前激活会话依赖宿主话题 `session://activated`（manifest 已声明 `events` 权限），缺少该权限的旧宿主仍可用，只是不再跟随会话切换。
 
 1. 构建本仓库：
 
