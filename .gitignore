@@ -45,3 +45,6 @@ docs/_drafts/
 
 # Local packaging output
 package/
+
+# omp 工作目录（内存/文档/临时脚本，勿入库）
+.omp/
