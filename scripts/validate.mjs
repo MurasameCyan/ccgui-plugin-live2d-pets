@@ -20,18 +20,19 @@ const requiredPermissions = [
 
 if (!/^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/.test(manifest.id)) throw new Error(`invalid plugin id: ${manifest.id}`);
 if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error(`invalid plugin version: ${manifest.version}`);
-if (!/^\d+\.\d+\.\d+$/.test(manifest.sdkVersion)) {
-  throw new Error(`sdkVersion must be an exact x.y.z pin (no ^/~/>=/*/x), got ${JSON.stringify(manifest.sdkVersion)}`);
+const minimumSdk = typeof manifest.sdkVersion === "string"
+  ? manifest.sdkVersion.match(/^>=(\d+\.\d+\.\d+)$/)
+  : null;
+if (!minimumSdk) {
+  throw new Error(`sdkVersion must declare a >=x.y.z minimum, got ${JSON.stringify(manifest.sdkVersion)}`);
 }
-// The compat line froze at an exact SDK value; the mirror stamp and the
-// pinned manifest must agree, and the mirrored PluginContext key set is
-// frozen so a later host sync that drops or renames a top-level capability
-// trips CI here instead of silently diverging from the contract we pin.
+// The mirror describes the minimum supported contract, not an exact host pin.
+// Keep its capability surface in sync while allowing newer host versions.
 const sdkSource = readFileSync(resolve(root, "src/sdk.ts"), "utf8");
 const sdkStamp = sdkSource.match(/@ccgui\/plugin-sdk mirror v(\d+\.\d+\.\d+)/);
 if (!sdkStamp) throw new Error("src/sdk.ts is missing its `@ccgui/plugin-sdk mirror v<x.y.z>` stamp");
-if (sdkStamp[1] !== manifest.sdkVersion) {
-  throw new Error(`src/sdk.ts stamp v${sdkStamp[1]} != manifest.sdkVersion ${manifest.sdkVersion}`);
+if (sdkStamp[1] !== minimumSdk[1]) {
+  throw new Error(`src/sdk.ts stamp v${sdkStamp[1]} != minimum SDK ${minimumSdk[1]}`);
 }
 const expectedContextKeys = [
   "pluginId", "version", "react", "hooks", "documentStorage", "assets",
