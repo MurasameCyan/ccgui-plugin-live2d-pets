@@ -3,7 +3,7 @@
   "name": "Live2D Pets",
   "version": "1.0.1",
   "minAppVersion": "1.0.4",
-  "sdkVersion": ">=0.3.12",
+  "sdkVersion": ">=0.3.17",
   "author": "MurasameCyan",
   "description": "在 CC GUI 中显示可互动的 Live2D 桌宠，并镜像 AI 会话状态。",
   "repo": "MurasameCyan/ccgui-plugin-live2d-pets",

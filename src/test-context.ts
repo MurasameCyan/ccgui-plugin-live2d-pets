@@ -66,7 +66,7 @@ export function makeContext() {
         for (const callback of [...(topics.get(topic) ?? [])]) callback(data);
       },
     },
-    host: { appVersion: "1.0.4", sdkVersion: "0.3.12", locale: "zh-CN", isWeb: false },
+    host: { appVersion: "1.0.4", sdkVersion: "0.3.17", locale: "zh-CN", isWeb: false },
   } as unknown as PluginContext;
   return {
     ctx,
