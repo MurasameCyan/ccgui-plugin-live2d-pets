@@ -21,9 +21,11 @@ function makeModel() {
   let updating = false;
   let subscriptions = 0;
   let elapsedTime = 0;
+  const vertices = new Float32Array([-0.5, -1, 0.5, -1, 0.5, 1, -0.5, 1]);
   return {
     width: 100,
     height: 200,
+    vertices,
     get autoUpdate() { return updating; },
     set autoUpdate(value: boolean) {
       // The bundled vendor adds a listener on every true assignment; false removes all.
@@ -40,6 +42,15 @@ function makeModel() {
     focus: vi.fn(),
     hitTest: () => ["Head"],
     internalModel: {
+      originalWidth: 100,
+      originalHeight: 200,
+      pixelsPerUnit: 100,
+      localTransform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 },
+      coreModel: {
+        getDrawableCount: () => 1,
+        getDrawableVertices: () => vertices,
+        getDrawableOpacity: () => 1,
+      },
       hitAreas: { Head: {} },
       focusController: { focus: vi.fn() },
       motionManager: { on: vi.fn(), off: vi.fn(), stopAllMotions: vi.fn(), definitions: {} },
@@ -65,6 +76,31 @@ function expectCompleteModel(model: ReturnType<typeof makeModel>, canvas: HTMLCa
   expect(bounds.top).toBeGreaterThanOrEqual(0);
   expect(bounds.right).toBeLessThanOrEqual(canvas.width);
   expect(bounds.bottom).toBeLessThanOrEqual(canvas.height);
+}
+
+function screenOrigin(model: ReturnType<typeof makeModel>, anchor: HTMLDivElement, canvas: HTMLCanvasElement) {
+  const [x, y] = model.position.set.mock.calls.at(-1)! as [number, number];
+  return {
+    x: window.innerWidth - parseFloat(anchor.style.right) - canvas.width + x,
+    y: window.innerHeight - parseFloat(anchor.style.bottom) - canvas.height + y,
+  };
+}
+
+function expectCompleteMesh(model: ReturnType<typeof makeModel>, canvas: HTMLCanvasElement) {
+  const { scale } = projectedModel(model);
+  const [x, y] = model.position.set.mock.calls.at(-1)! as [number, number];
+  const im = model.internalModel;
+  const t = im.localTransform;
+  for (let index = 0; index < model.vertices.length; index += 2) {
+    const vx = model.vertices[index]! * im.pixelsPerUnit + im.originalWidth / 2;
+    const vy = -model.vertices[index + 1]! * im.pixelsPerUnit + im.originalHeight / 2;
+    const px = x + (t.a * vx + t.c * vy + t.tx - model.width / 2) * scale;
+    const py = y + (t.b * vx + t.d * vy + t.ty - model.height / 2) * scale;
+    expect(px).toBeGreaterThanOrEqual(0);
+    expect(px).toBeLessThanOrEqual(canvas.width);
+    expect(py).toBeGreaterThanOrEqual(0);
+    expect(py).toBeLessThanOrEqual(canvas.height);
+  }
 }
 
 let mountId = 0;
@@ -547,31 +583,71 @@ describe("pet overlay display lifecycle", () => {
     },
   );
 
-  it("keeps later wide poses visible without changing their screen transform", async () => {
-    const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
+  it("keeps deformed mesh vertices visible without moving the on-screen model", async () => {
+    vi.stubGlobal("innerWidth", 4096);
+    vi.stubGlobal("innerHeight", 4096);
     const model = makeModel();
-    const harness = await mountPet({ art, model });
+    const harness = await mountPet({ model, display: { right: 1000, bottom: 1000 } });
     await settle(harness);
-    let raf: FrameRequestCallback | undefined;
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => { raf = callback; return 1; });
-    await act(async () => {
-      await harness.runtime.setSettings([{ op: "set", path: ["size"], value: 300 }]);
-      raf?.(0);
-    });
-
     const canvas = harness.modelCanvas()!;
-    const before = projectedModel(model);
-    const viewportPosition = { right: harness.anchor.style.right, bottom: harness.anchor.style.bottom };
-    expectCompleteModel(model, canvas);
-    art.x0 = 0;
-    art.x1 = canvas.width - 1;
-    art.y0 = 0;
-    art.y1 = canvas.height - 1;
-    await settle(harness, 90);
+    const before = screenOrigin(model, harness.anchor, canvas);
+    const scale = projectedModel(model).scale;
 
-    expect(projectedModel(model)).toEqual(before);
-    expect({ right: harness.anchor.style.right, bottom: harness.anchor.style.bottom }).toEqual(viewportPosition);
-    expectCompleteModel(model, canvas);
+    // A focus/physics deformation can cross every side of the authored canvas.
+    model.vertices.set([-0.9, -1.25, 0.85, -1.25, 0.85, 1.3, -0.9, 1.3]);
+    await settle(harness, 1);
+
+    expectCompleteMesh(model, canvas);
+    expect(projectedModel(model).scale).toBe(scale);
+    expect(screenOrigin(model, harness.anchor, canvas).x).toBeCloseTo(before.x, 5);
+    expect(screenOrigin(model, harness.anchor, canvas).y).toBeCloseTo(before.y, 5);
+
+    const expanded = { width: canvas.width, height: canvas.height };
+    model.vertices.set([-0.5, -1, 0.5, -1, 0.5, 1, -0.5, 1]);
+    await act(async () => { await harness.runtime.setSettings([{ op: "set", path: ["persona"], value: "genki" }]); });
+    await settle(harness);
+    expect({ width: canvas.width, height: canvas.height }).toEqual(expanded);
+    expect(screenOrigin(model, harness.anchor, canvas).x).toBeCloseTo(before.x, 5);
+    expect(screenOrigin(model, harness.anchor, canvas).y).toBeCloseTo(before.y, 5);
+  });
+
+  it.each([{ width: 220, height: 900 }, { width: 1200, height: 220 }])(
+    "keeps a newly expanded mesh inside a $width x $height viewport",
+    async ({ width, height }) => {
+      vi.stubGlobal("innerWidth", width);
+      vi.stubGlobal("innerHeight", height);
+      const model = makeModel();
+      const harness = await mountPet({ model, config: { size: 400 }, display: { right: 0, bottom: 0 } });
+      await settle(harness);
+      model.vertices.set([-0.9, -1.25, 0.85, -1.25, 0.85, 1.3, -0.9, 1.3]);
+      await settle(harness, 1);
+      const canvas = harness.modelCanvas()!;
+      expectCompleteMesh(model, canvas);
+      const right = parseFloat(harness.anchor.style.right);
+      const bottom = parseFloat(harness.anchor.style.bottom);
+      expect(right).toBeGreaterThanOrEqual(0);
+      expect(bottom).toBeGreaterThanOrEqual(0);
+      expect(right + canvas.width).toBeLessThanOrEqual(width);
+      expect(bottom + canvas.height).toBeLessThanOrEqual(height);
+      expect(harness.runtime.snapshot().config.size).toBe(400);
+      const before = screenOrigin(model, harness.anchor, canvas);
+      await act(async () => { await harness.runtime.setSettings([{ op: "set", path: ["persona"], value: "genki" }]); });
+      expect(screenOrigin(model, harness.anchor, canvas)).toEqual(before);
+    },
+  );
+
+  it("includes the model layout transform when covering a deformed mesh", async () => {
+    vi.stubGlobal("innerWidth", 4096);
+    vi.stubGlobal("innerHeight", 4096);
+    const model = makeModel();
+    model.width = 200;
+    model.height = 100;
+    model.internalModel.localTransform = { a: 2, b: 0, c: 0, d: 0.5, tx: 10, ty: -20 };
+    const harness = await mountPet({ model, display: { right: 1000, bottom: 1000 } });
+    await settle(harness);
+    model.vertices.set([-0.9, -1.25, 0.85, -1.25, 0.85, 1.3, -0.9, 1.3]);
+    await settle(harness, 1);
+    expectCompleteMesh(model, harness.modelCanvas()!);
   });
 
   it("replaces the browser image menu with refresh and close actions", async () => {

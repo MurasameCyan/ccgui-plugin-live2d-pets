@@ -1,10 +1,18 @@
 # Changelog
 
+## [1.0.3] - 2026-09-30
+
+### Fixed
+
+- Cover live Cubism mesh deformation beyond the authored canvas, including motion, mouse-follow, and physics; grow the drawing buffer and repaint in the same frame.
+- Compensate canvas growth against the original anchor instead of moving the model; retain expanded coverage when a pose returns to idle. Viewport limits still take precedence when space runs out.
+- Resolve pointer hit probes against the current canvas geometry after expansion, and remove the mesh coverage listener on model replacement or unload.
+
 ## [1.0.2] - 2026-09-30
 
 ### Fixed
 
-- Preserve the full authored model canvas after visible-width calibration so later poses do not lose hair, hands, or props at a tightly cropped edge.
+- Preserve the full authored model canvas after visible-width calibration instead of cropping to the initial pose.
 - Fit the complete animation canvas against both viewport dimensions without changing the saved size preference.
 - Make model ticker transitions idempotent; repeated configuration, runtime, and focus events no longer accumulate subscriptions and accelerate animation.
 - Stop warmup readback after revealing the model instead of continuously sampling a frozen layout.

@@ -43,6 +43,15 @@ interface ModelLike {
   hitTest(x: number, y: number): string[]
   getBounds?: () => { x: number; y: number; width: number; height: number }
   internalModel?: {
+    originalWidth?: number
+    originalHeight?: number
+    pixelsPerUnit?: number
+    localTransform?: { a: number; b: number; c: number; d: number; tx: number; ty: number }
+    coreModel?: {
+      getDrawableCount(): number
+      getDrawableVertices(index: number): ArrayLike<number>
+      getDrawableOpacity(index: number): number
+    }
     hitAreas?: Record<string, unknown>
     focusController?: { focus(x: number, y: number, instant?: boolean): void }
     motionManager?: {
@@ -330,10 +339,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // 模型基础尺寸（scale=1 时捕获一次；避免按当前 scale 累积误差）。
   let baseModelW = 0
   let baseModelH = 0
-  // 预热只校准主体的显示宽度；动画空间始终包含完整模型画布，不按短暂姿势裁小。
-  // artRef 与 artUnion 在预热结束后冻结，后续动作不再影响布局。
+  // 主体宽度与初始锚点在预热后冻结；变形超出原始画布时只扩展渲染覆盖。
   let artRef: { w: number; h: number; cx: number; cy: number } | null = null
   let artUnion: { x0: number; x1: number; y0: number; y1: number } | null = null
+  let animationCover: { x0: number; x1: number; y0: number; y1: number } | null = null
+  // 渲染画布相对初始锚点的偏移：扩展留白不移动模型的屏幕原点。
+  let canvasRightOffset = 0
+  let canvasBottomOffset = 0
+  let detachAnimationCover: (() => void) | null = null
   /** 最近一次适配使用的 scale：读取帧缓冲时把画布像素换算回模型单位。 */
   let artScale = 0
   /** 模型原点在画布坐标中的位置，用于把后续采样换算回模型单位。 */
@@ -342,7 +355,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let detachArtMeasure: (() => void) | null = null
   /** 摘除指针命中探测（随渲染层一起销毁）。 */
   let detachHitProbe: (() => void) | null = null
-  /** 待探测的指针位置（画布像素）：指针移动时记录，渲染后读取该处 alpha。 */
+  /** 待探测的指针屏幕坐标；渲染后再换算，避免画布扩展后沿用旧位图坐标。 */
   let pendingHitProbe: { x: number; y: number } | null = null
   // 尺寸变更合并：连续设置更新只落地最后一档，避免串行 WebGL resize。
   let pendingSize: number | null = null
@@ -683,9 +696,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     }
   }
 
-  /** 主体宽度决定目标缩放；完整动画画布的宽、高共同限制视口内的实际缩放。 */
+  /** 主体宽度决定目标缩放；完整覆盖的宽、高共同限制视口内的实际缩放。 */
   function renderedSizeFor(requested: number): number {
-    const cover = artCover()
+    const cover = animationCover ?? artCover()
     const base = artBase()
     let size = Math.min(requested, Math.max(40, window.innerWidth - VIEWPORT_MARGIN))
     if (cover && base && base.w > 0) {
@@ -705,7 +718,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   /** 画布尺寸：宽度至少是尺寸档（覆盖更宽时按覆盖），高度按覆盖范围与当前缩放。 */
   function canvasSizeFor(size: number): { width: number; height: number } {
     const base = artBase()
-    const cover = artCover()
+    const cover = animationCover ?? artCover()
     if (!base || !cover || !(base.w > 0 && base.h > 0)) return { width: size, height: Math.round(size * 1.2) }
     const scale = (size - ART_PADDING) / base.w
     const coverW = cover.x1 - cover.x0
@@ -732,15 +745,18 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     syncDebugPanelWidth()
   }
 
-  /** 仅在加载、尺寸或视口变化时适配；固定完整画布，不让姿势变化驱动裁切和重排。 */
+  /** 保持主体缩放基准和初始锚点；新增的动画空间通过画布偏移补偿。 */
   function fitModel(): void {
     if (!model || !canvas) return
     const base = artBase()
-    const cover = artCover()
-    if (!base || !cover || !(base.w > 0 && base.h > 0)) return
+    const reference = artCover()
+    const cover = animationCover ?? reference
+    if (!base || !reference || !cover || !(base.w > 0 && base.h > 0)) return
     const size = renderedSizeFor(pos.size)
     const scale = (size - ART_PADDING) / base.w
     artScale = scale
+    canvasRightOffset = (reference.x1 - cover.x1) * scale
+    canvasBottomOffset = (cover.y0 - reference.y0) * scale
     const canvasSize = canvasSizeFor(size)
     resizeCanvas(canvasSize.width, canvasSize.height)
     model.anchor.set(0.5, 0.5)
@@ -749,6 +765,54 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     const originY = canvasSize.height - ART_PADDING / 2 + cover.y0 * scale
     model.position.set(originX, originY)
     modelOrigin = { x: originX, y: originY }
+  }
+
+  /** Core 顶点包含本帧的动作、focus 和物理形变；getBounds 只有声明的画布矩形。 */
+  function expandAnimationCover(): void {
+    const internal = model?.internalModel
+    const core = internal?.coreModel
+    const transform = internal?.localTransform
+    const ppu = internal?.pixelsPerUnit
+    const originalW = internal?.originalWidth
+    const originalH = internal?.originalHeight
+    const cover = animationCover
+    if (!core || !transform || !ppu || !originalW || !originalH || !cover || !(artScale > 0)) return
+    // 直接读 Core 的借用顶点数组；InternalModel.getDrawableVertices() 会逐网格复制。
+    const ax = transform.a * ppu
+    const bx = -transform.c * ppu
+    const tx = transform.a * originalW / 2 + transform.c * originalH / 2 + transform.tx - baseModelW / 2
+    const ay = -transform.b * ppu
+    const by = transform.d * ppu
+    const ty = baseModelH / 2 - transform.b * originalW / 2 - transform.d * originalH / 2 - transform.ty
+    let x0 = Infinity
+    let x1 = -Infinity
+    let y0 = Infinity
+    let y1 = -Infinity
+    const count = core.getDrawableCount()
+    for (let drawable = 0; drawable < count; drawable += 1) {
+      if (core.getDrawableOpacity(drawable) <= 0) continue
+      const vertices = core.getDrawableVertices(drawable)
+      for (let index = 0; index < vertices.length; index += 2) {
+        const vx = vertices[index]!
+        const vy = vertices[index + 1]!
+        const x = ax * vx + bx * vy + tx
+        const y = ay * vx + by * vy + ty
+        x0 = Math.min(x0, x)
+        x1 = Math.max(x1, x)
+        y0 = Math.min(y0, y)
+        y1 = Math.max(y1, y)
+      }
+    }
+    if (!Number.isFinite(x0 + x1 + y0 + y1)) return
+    if (x0 >= cover.x0 && x1 <= cover.x1 && y0 >= cover.y0 && y1 <= cover.y1) return
+    // 小块增容避免每移动一个像素就重建帧缓冲；容量只增不减，不是形变上限。
+    const reserve = ART_EDGE_MARGIN_PX / artScale
+    if (x0 < cover.x0) cover.x0 = x0 - reserve
+    if (x1 > cover.x1) cover.x1 = x1 + reserve
+    if (y0 < cover.y0) cover.y0 = y0 - reserve
+    if (y1 > cover.y1) cover.y1 = y1 + reserve
+    // 回调在 render 后、命中探测前执行；同一帧立即重绘，不呈现被裁掉的中间帧。
+    applySizeNow(pos.size)
   }
 
 
@@ -823,10 +887,18 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (!probe || !canvas) return
     if (dragging) return
     pendingHitProbe = null
+    const rect = canvas.getBoundingClientRect()
+    if (!(rect.width > 0 && rect.height > 0)) return
+    if (probe.x < rect.left || probe.x > rect.right || probe.y < rect.top || probe.y > rect.bottom) {
+      canvas.style.pointerEvents = 'none'
+      return
+    }
+    const px = ((probe.x - rect.left) / rect.width) * canvas.width
+    const py = canvas.height - 1 - ((probe.y - rect.top) / rect.height) * canvas.height
     const gl = app?.renderer?.gl
     if (!gl || typeof gl.readPixels !== 'function') return
-    const x = Math.max(0, Math.min(canvas.width - 1, Math.floor(probe.x) - HIT_PROBE_RADIUS))
-    const y = Math.max(0, Math.min(canvas.height - 1, Math.floor(probe.y) - HIT_PROBE_RADIUS))
+    const x = Math.max(0, Math.min(canvas.width - 1, Math.floor(px) - HIT_PROBE_RADIUS))
+    const y = Math.max(0, Math.min(canvas.height - 1, Math.floor(py) - HIT_PROBE_RADIUS))
     const w = Math.min(HIT_PROBE_RADIUS * 2 + 1, canvas.width - x)
     const h = Math.min(HIT_PROBE_RADIUS * 2 + 1, canvas.height - y)
     if (!(w > 0 && h > 0)) return
@@ -854,11 +926,13 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   /** 把 right/bottom 钳制在视口内：桌宠可贴右/下边，但不能被拖出画面（spec §4）。 */
   function clampDisplay(next: { right: number; bottom: number; size: number }): { right: number; bottom: number; size: number } {
     const { w, h } = petBoxSize()
-    const maxRight = Math.max(0, window.innerWidth - w)
-    const maxBottom = Math.max(0, window.innerHeight - h)
+    const minRight = -canvasRightOffset
+    const minBottom = -canvasBottomOffset
+    const maxRight = Math.max(minRight, window.innerWidth - w - canvasRightOffset)
+    const maxBottom = Math.max(minBottom, window.innerHeight - h - canvasBottomOffset)
     return {
-      right: Math.min(Math.max(0, Math.round(next.right)), Math.round(maxRight)),
-      bottom: Math.min(Math.max(0, Math.round(next.bottom)), Math.round(maxBottom)),
+      right: Math.min(Math.max(Math.ceil(minRight), Math.round(next.right)), Math.floor(maxRight)),
+      bottom: Math.min(Math.max(Math.ceil(minBottom), Math.round(next.bottom)), Math.floor(maxBottom)),
       size: next.size,
     }
   }
@@ -867,8 +941,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   function applyPosition(): void {
     if (!box) return
     pos = clampDisplay(pos)
-    box.style.right = `${pos.right}px`
-    box.style.bottom = `${pos.bottom}px`
+    box.style.right = `${pos.right + canvasRightOffset}px`
+    box.style.bottom = `${pos.bottom + canvasBottomOffset}px`
   }
 
   /** 立即应用尺寸（size = 可见宽度，受视口限制，spec §4）。 */
@@ -878,6 +952,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     fitModel()
     // 画布尺寸变化会改变可停靠范围：重新钳制位置。
     applyPosition()
+    if (lastPointerClient) pendingHitProbe = lastPointerClient
     // 重设画布会清空位图：立刻重绘，否则合成帧会出现空白（闪烁）。
     try { app.render?.() } catch { /* 旧渲染器 */ }
   }
@@ -913,6 +988,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     detachMotionFinish = null
     // 跨帧绘制区域测量绑在旧 ticker 上：必须在销毁 app 前摘掉，否则重试回调残留。
     detachArtMeasure?.()
+    detachAnimationCover?.()
     detachHitProbe?.()
     pendingHitProbe = null
     if (sizeRaf) { window.cancelAnimationFrame(sizeRaf); sizeRaf = 0 }
@@ -929,6 +1005,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     baseModelH = 0
     artRef = null
     artUnion = null
+    animationCover = null
+    canvasRightOffset = 0
+    canvasBottomOffset = 0
     artScale = 0
     modelOrigin = { x: 0, y: 0 }
     if (zoneOverlay && zoneOverlay.parentNode) zoneOverlay.parentNode.removeChild(zoneOverlay)
@@ -1039,10 +1118,15 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       }
       refreshDebugMotionGroups()
       fitModel()
+      // 本帧 Core 更新发生在 render 内；先扩容重绘，再让 UTILITY 读取像素。
+      app.ticker.add(expandAnimationCover, undefined, TICKER_PRIORITY_UTILITY + 1)
+      detachAnimationCover = () => {
+        detachAnimationCover = null
+        try { app?.ticker.remove(expandAnimationCover) } catch { /* ticker 已销毁 */ }
+      }
       // 绘制区域采样必须排在渲染之后：PIXI 把 render 挂在 LOW(-25)，
       // 用默认 NORMAL(0) 的回调会在首帧渲染前读到空帧缓冲（实测 alpha 全 0）。
-      // 隐藏预热只校准主体宽度，之后保留完整模型画布并停止测量。
-      // 反复收紧到某一姿势会裁掉后续动作；常驻回读也不再有用途。
+      // 隐藏预热只校准主体宽度，之后停止像素回读，交给 Core 网格覆盖形变。
       try {
         let warmTicks = 0
         let samples = 0
@@ -1052,7 +1136,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
           if (disposed || model !== loaded) return
           detachArtMeasure?.()
           artRef = artUnion ? metricsFromRect(artUnion) : null
+          animationCover = artCover()
           applySizeNow(pos.size)
+          expandAnimationCover()
           if (canvas) canvas.style.visibility = ''
         }
         const measure = (): void => {
@@ -1485,13 +1571,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       if (bubble) bubble.style.opacity = '0'
     }
     if (dragging && box) {
-      pos = clampDisplay({
+      pos = {
         right: down.startRight - dx,
         bottom: down.startBottom - dy,
         size: pos.size,
-      })
-      box.style.right = `${pos.right}px`
-      box.style.bottom = `${pos.bottom}px`
+      }
+      applyPosition()
     }
   }
   function handlePointerUp(e: PointerEvent): void {
@@ -1511,18 +1596,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // ---- 鼠标跟随（spec §4）：全局 pointermove，头/眼/身体看向鼠标 ----
   function handleGlobalPointerMove(e: PointerEvent): void {
     lastPointerClient = { x: e.clientX, y: e.clientY }
-    // 指针命中探测：记录画布内位置，渲染后判定该处是否有像素（决定是否放行点击）。
-    if (canvas && !dragging) {
-      const rect = canvas.getBoundingClientRect()
-      if (rect.width > 0 && rect.height > 0
-        && e.clientX >= rect.left && e.clientX <= rect.right
-        && e.clientY >= rect.top && e.clientY <= rect.bottom) {
-        // 换算到画布位图坐标（GL 原点在左下）
-        const px = ((e.clientX - rect.left) / rect.width) * canvas.width
-        const py = canvas.height - 1 - ((e.clientY - rect.top) / rect.height) * canvas.height
-        pendingHitProbe = { x: px, y: py }
-      }
-    }
+    if (canvas && !dragging) pendingHitProbe = lastPointerClient
     // 非 idle 动作播放期间抑制 focus，避免动作关键帧被鼠标跟随叠加（spec §4）
     if (!model || !canvas || dragging || !enabled || hidden || focusSuppressed) return
     applyFocus(e.clientX, e.clientY)
@@ -1621,11 +1695,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         // A runtime event must not replace unsaved coordinates mid-drag.
         // Rendering size stays local until applyConfig schedules its update.
         if (!dragging) {
-          pos = clampDisplay({ right: next.display.right, bottom: next.display.bottom, size: pos.size })
-          if (box) {
-            box.style.right = `${pos.right}px`
-            box.style.bottom = `${pos.bottom}px`
-          }
+          pos = { right: next.display.right, bottom: next.display.bottom, size: pos.size }
+          applyPosition()
         }
         applyConfig(next)
         applyState(next)
