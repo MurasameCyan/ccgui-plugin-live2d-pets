@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      delivery:
+        description: Package delivery (log avoids Actions artifact storage quota)
+        type: choice
+        default: artifact
+        options: [artifact, log]
 
 permissions:
   contents: read
@@ -33,7 +39,16 @@ jobs:
           cd package
           zip -r "ccgui-plugin-live2d-pets-${version}.zip" ccgui-plugin-live2d-pets
           sha256sum "ccgui-plugin-live2d-pets-${version}.zip" > SHA256SUMS
+      - name: Export installable plugin through CI logs
+        if: inputs.delivery == 'log'
+        shell: bash
+        run: |
+          cat package/SHA256SUMS
+          echo 'CCGUI_PLUGIN_ZIP_BEGIN'
+          base64 -w 76 package/*.zip
+          echo 'CCGUI_PLUGIN_ZIP_END'
       - uses: actions/upload-artifact@v4
+        if: inputs.delivery != 'log'
         with:
           name: ccgui-plugin-live2d-pets
           path: |

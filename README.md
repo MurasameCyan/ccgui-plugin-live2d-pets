@@ -50,6 +50,8 @@ bun run validate
 
 `main.js` 是 CC GUI 插件 loader 的默认 ESM 入口。插件代码只依赖运行时注入的 `PluginContext`，不导入 React、Tauri 或 CC GUI 内部模块。
 
+GitHub Actions 的 `Test and package plugin` 工作流默认上传安装 zip。账号的 Actions artifact 配额耗尽时，可手动运行并选择 `delivery: log`：仍执行完整验证和 CI 构建，随后在 `Export installable plugin through CI logs` 步骤输出 SHA-256，以及 `CCGUI_PLUGIN_ZIP_BEGIN` / `CCGUI_PLUGIN_ZIP_END` 之间的 base64 zip 内容。解码下载后须与日志中的 SHA-256 比对；此方式不发布 Release。
+
 ## 模型地址与权限
 
 - 内置模型使用 `cdn.jsdelivr.net`，manifest 已声明该精确网络权限。
