@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.4] - 2026-10-01
+
+### Fixed
+
+- Anchor the speech bubble to the model's visible bounds instead of the transparent canvas top.
+- Move the bubble below the model when the top edge has insufficient room, and clamp its horizontal center inside the viewport.
+- Recalculate bubble placement after text, model motion, mouse-follow, physics, resize, and model replacement without changing model or drag coordinates.
+
 ## [1.0.3] - 2026-09-30
 
 ### Fixed

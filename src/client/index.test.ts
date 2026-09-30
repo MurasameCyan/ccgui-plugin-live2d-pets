@@ -41,6 +41,7 @@ function makeModel() {
     destroy: vi.fn(() => { updating = false; subscriptions = 0; }),
     focus: vi.fn(),
     hitTest: () => ["Head"],
+    getBounds: undefined as (() => { x: number; y: number; width: number; height: number }) | undefined,
     internalModel: {
       originalWidth: 100,
       originalHeight: 200,
@@ -635,6 +636,24 @@ describe("pet overlay display lifecycle", () => {
       expect(screenOrigin(model, harness.anchor, canvas)).toEqual(before);
     },
   );
+  it("anchors the bubble to the visible model bounds instead of the transparent canvas top", async () => {
+    const model = makeModel();
+    model.getBounds = () => ({ x: 25, y: 72, width: 80, height: 100 });
+    const harness = await mountPet({ model });
+    const canvas = harness.modelCanvas()!;
+    const bubble = canvas.parentElement!.querySelector("div") as HTMLDivElement;
+    bubble.getBoundingClientRect = () => ({
+      x: 0, y: 0, left: 0, top: 0, right: 120, bottom: 28,
+      width: 120, height: 28, toJSON: () => ({}),
+    }) as DOMRect;
+
+    await act(async () => { harness.frame(); });
+
+    expect(bubble.style.left).toBe("68px");
+    expect(bubble.style.top).toBe("36px");
+    expect(bubble.style.bottom).toBe("auto");
+    expect(bubble.style.transform).toBe("translateX(-50%)");
+  });
 
   it("includes the model layout transform when covering a deformed mesh", async () => {
     vi.stubGlobal("innerWidth", 4096);

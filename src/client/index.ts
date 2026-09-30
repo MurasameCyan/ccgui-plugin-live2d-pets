@@ -81,6 +81,10 @@ const DRAG_THRESHOLD = 6
 const TAP_DEBOUNCE_MS = 80
 /** 瞬态气泡显示时长（ms）：到时自动隐藏或回落阶段文案。 */
 const BUBBLE_DISPLAY_MS = 2500
+/** 气泡与模型可见边界的间距（CSS px）。 */
+const BUBBLE_GAP_PX = 8
+/** 气泡贴近窗口边缘时保留的最小留白（CSS px）。 */
+const BUBBLE_VIEWPORT_PADDING_PX = 8
 /**
  * 默认渲染帧率上限（spec §2/§7）：未封顶时 PIXI ticker 可达 120–140fps，
  * 长时间挂页会持续占满 GPU/主线程；桌宠动画默认 30fps 足够，用户可在设置中改档。
@@ -347,6 +351,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let canvasRightOffset = 0
   let canvasBottomOffset = 0
   let detachAnimationCover: (() => void) | null = null
+  /** 摘除模型可见边界定位回调。 */
+  let detachBubblePosition: (() => void) | null = null
   /** 最近一次适配使用的 scale：读取帧缓冲时把画布像素换算回模型单位。 */
   let artScale = 0
   /** 模型原点在画布坐标中的位置，用于把后续采样换算回模型单位。 */
@@ -419,6 +425,60 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       bubbleHideTimer = undefined
     }
   }
+  let bubblePositionKey = ''
+
+  /**
+   * 把气泡锚到模型当前可见包围盒，而不是整张透明画布的顶部。
+   * 模型动作、鼠标跟随和物理会改变 getBounds()，所以由渲染 ticker 持续校正；
+   * 顶部空间不足时改放到模型下方，并把横向中心钳在窗口内。
+   */
+  function syncBubblePosition(): void {
+    if (!bubble || !canvas || !model || bubble.parentNode !== petLayer) return
+    let bounds: { x: number; y: number; width: number; height: number } | null = null
+    if (artUnion && artScale > 0) {
+      const x0 = modelOrigin.x + artUnion.x0 * artScale
+      const x1 = modelOrigin.x + artUnion.x1 * artScale
+      const y0 = modelOrigin.y - artUnion.y1 * artScale
+      const y1 = modelOrigin.y - artUnion.y0 * artScale
+      bounds = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+    } else {
+      try {
+        const next = model.getBounds?.()
+        if (next && next.width > 0 && next.height > 0) bounds = next
+      } catch { /* 包围盒不可用时保留旧定位 */ }
+    }
+    if (!bounds) return
+    const canvasRect = canvas.getBoundingClientRect()
+    if (!(canvasRect.width > 0 && canvasRect.height > 0)) return
+    const scaleX = canvasRect.width / canvas.width
+    const scaleY = canvasRect.height / canvas.height
+    const modelLeft = canvasRect.left + bounds.x * scaleX
+    const modelTop = canvasRect.top + bounds.y * scaleY
+    const modelBottom = canvasRect.top + (bounds.y + bounds.height) * scaleY
+    const bubbleRect = bubble.getBoundingClientRect()
+    const bubbleWidth = bubble.offsetWidth || bubbleRect.width
+    const bubbleHeight = bubble.offsetHeight || bubbleRect.height
+    const viewportPadding = BUBBLE_VIEWPORT_PADDING_PX
+    const centerMin = viewportPadding + bubbleWidth / 2
+    const centerMax = Math.max(centerMin, window.innerWidth - viewportPadding - bubbleWidth / 2)
+    const centerX = Math.min(Math.max(modelLeft + bounds.width * scaleX / 2, centerMin), centerMax)
+    const aboveTop = modelTop - BUBBLE_GAP_PX - bubbleHeight
+    const belowTop = modelBottom + BUBBLE_GAP_PX
+    const belowFits = belowTop + bubbleHeight <= window.innerHeight - viewportPadding
+    const top = aboveTop >= viewportPadding || !belowFits
+      ? Math.min(Math.max(aboveTop, viewportPadding), Math.max(viewportPadding, window.innerHeight - viewportPadding - bubbleHeight))
+      : belowTop
+    const localLeft = centerX - canvasRect.left
+    const localTop = top - canvasRect.top
+    const key = `${localLeft.toFixed(1)}:${localTop.toFixed(1)}`
+    if (key === bubblePositionKey) return
+    bubblePositionKey = key
+    bubble.style.left = `${localLeft.toFixed(1)}px`
+    bubble.style.top = `${localTop.toFixed(1)}px`
+    bubble.style.bottom = 'auto'
+    bubble.style.transform = 'translateX(-50%)'
+    bubble.style.marginBottom = '0'
+  }
 
   /** 显示常驻气泡文案：取消瞬态隐藏计时，气泡保持可见直到被取代。 */
   function setBubbleText(text: string): void {
@@ -426,6 +486,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     clearBubbleHideTimer()
     bubble.textContent = text
     bubble.style.opacity = '1'
+    syncBubblePosition()
   }
 
   /** 重绘当前阶段文案（阶段推进/瞬态气泡到时回落/拖拽结束后恢复）。 */
@@ -988,6 +1049,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     detachMotionFinish = null
     // 跨帧绘制区域测量绑在旧 ticker 上：必须在销毁 app 前摘掉，否则重试回调残留。
     detachArtMeasure?.()
+    detachBubblePosition?.()
+    bubblePositionKey = ''
     detachAnimationCover?.()
     detachHitProbe?.()
     pendingHitProbe = null
@@ -1118,6 +1181,13 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       }
       refreshDebugMotionGroups()
       fitModel()
+      syncBubblePosition()
+      // 在模型渲染和形变扩容后更新气泡；只改气泡位置，不改模型坐标。
+      app.ticker.add(syncBubblePosition, undefined, TICKER_PRIORITY_UTILITY + 2)
+      detachBubblePosition = () => {
+        detachBubblePosition = null
+        try { app?.ticker.remove(syncBubblePosition) } catch { /* ticker 已销毁 */ }
+      }
       // 本帧 Core 更新发生在 render 内；先扩容重绘，再让 UTILITY 读取像素。
       app.ticker.add(expandAnimationCover, undefined, TICKER_PRIORITY_UTILITY + 1)
       detachAnimationCover = () => {
