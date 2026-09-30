@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.2] - 2026-09-30
+
+### Fixed
+
+- Preserve the full authored model canvas after visible-width calibration so later poses do not lose hair, hands, or props at a tightly cropped edge.
+- Fit the complete animation canvas against both viewport dimensions without changing the saved size preference.
+- Make model ticker transitions idempotent; repeated configuration, runtime, and focus events no longer accumulate subscriptions and accelerate animation.
+- Stop warmup readback after revealing the model instead of continuously sampling a frozen layout.
+
 ## [1.0.0] - 2026-09-18
 
 ### Added

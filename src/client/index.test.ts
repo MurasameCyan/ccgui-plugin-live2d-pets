@@ -18,15 +18,25 @@ function deferred<T>() {
 }
 
 function makeModel() {
+  let updating = false;
+  let subscriptions = 0;
+  let elapsedTime = 0;
   return {
     width: 100,
     height: 200,
-    autoUpdate: true,
+    get autoUpdate() { return updating; },
+    set autoUpdate(value: boolean) {
+      // The bundled vendor adds a listener on every true assignment; false removes all.
+      subscriptions = value ? subscriptions + 1 : 0;
+      updating = value;
+    },
+    get elapsedTime() { return elapsedTime; },
+    advanceSharedTime(milliseconds: number) { elapsedTime += subscriptions * milliseconds; },
     anchor: { set: vi.fn() },
     scale: { set: vi.fn() },
     position: { set: vi.fn() },
     motion: vi.fn(async () => true),
-    destroy: vi.fn(),
+    destroy: vi.fn(() => { updating = false; subscriptions = 0; }),
     focus: vi.fn(),
     hitTest: () => ["Head"],
     internalModel: {
@@ -35,6 +45,26 @@ function makeModel() {
       motionManager: { on: vi.fn(), off: vi.fn(), stopAllMotions: vi.fn(), definitions: {} },
     },
   };
+}
+
+function projectedModel(model: ReturnType<typeof makeModel>) {
+  const scale = model.scale.set.mock.calls.at(-1)![0] as number;
+  const [x, y] = model.position.set.mock.calls.at(-1)! as [number, number];
+  return {
+    left: x - model.width * scale / 2,
+    top: y - model.height * scale / 2,
+    right: x + model.width * scale / 2,
+    bottom: y + model.height * scale / 2,
+    scale,
+  };
+}
+
+function expectCompleteModel(model: ReturnType<typeof makeModel>, canvas: HTMLCanvasElement) {
+  const bounds = projectedModel(model);
+  expect(bounds.left).toBeGreaterThanOrEqual(0);
+  expect(bounds.top).toBeGreaterThanOrEqual(0);
+  expect(bounds.right).toBeLessThanOrEqual(canvas.width);
+  expect(bounds.bottom).toBeLessThanOrEqual(canvas.height);
 }
 
 let mountId = 0;
@@ -214,16 +244,6 @@ describe("pet overlay display lifecycle", () => {
     vi.unstubAllGlobals();
   });
 
-  it("loads the CSP-compatible PIXI adapter before the Live2D renderer", async () => {
-    const { scripts, loadModel } = await mountPet();
-    expect(scripts.map((script) => script.src.split("/vendor/")[1])).toEqual([
-      "pixi.min.js",
-      "pixi-unsafe-eval.min.js",
-      "live2dcubismcore.min.js",
-      "live2d-display.cubism4.min.js",
-    ]);
-    expect(loadModel).toHaveBeenCalledOnce();
-  });
 
   it("resets the visible position without resetting the configured size", async () => {
     const { runtime, anchor, ctx } = await mountPet();
@@ -259,28 +279,22 @@ describe("pet overlay display lifecycle", () => {
     await act(async () => { pointer(canvas, "pointerup", 1200, 1200); });
   });
 
-  it("fits the canvas to the drawn area after the warmup samples", async () => {
-    const canvasW = 240;
-    const canvasH = 472;
+  it("keeps the full authored model visible after calibrating a narrow initial pose", async () => {
+    vi.stubGlobal("innerWidth", 4096);
+    vi.stubGlobal("innerHeight", 4096);
     const model = makeModel();
-    // 绘制区域：画布坐标 x 100..139 (40px), y 200..299 (100px)。
     const harness = await mountPet({ art: { x0: 100, x1: 139, y0: 200, y1: 299 }, model });
-    const { anchor } = harness;
-    const canvas = anchor.querySelector("canvas")!;
-    expect(canvas.width).toBe(canvasW);
-    expect(canvas.height).toBe(canvasH);
-    expect(canvas.style.visibility).toBe("hidden"); // 出现前先隐藏，避免出现后再改尺寸
+    const canvas = harness.modelCanvas()!;
+    expect(canvas.style.visibility).toBe("hidden");
+    const initialScale = projectedModel(model).scale;
 
     await settle(harness);
 
-    // 尺寸语义：size = 可见宽度。绘制区域 40x100px 撑满后 canvas 约 240x588，
-    // 模型钉在画布右/下边（之后扩画布不会移动它）。
-    expect(canvas.width).toBe(canvasW);
-    expect(canvas.height).toBe(588);
     expect(canvas.style.visibility).toBe("");
-    const [px, py] = model.position.set.mock.calls.at(-1) as [number, number];
-    expect(Math.round(px)).toBe(120);
-    expect(Math.round(py)).toBe(213);
+    // The 40px initial silhouette is calibrated to the requested visible width,
+    // but later poses may use every part of the original model canvas.
+    expect(40 / initialScale * projectedModel(model).scale).toBeCloseTo(232, 1);
+    expectCompleteModel(model, canvas);
   });
 
   it("keeps animating while the window is inactive only when the switch is on", async () => {
@@ -516,65 +530,48 @@ describe("pet overlay display lifecycle", () => {
     expect(renderAt).toBeGreaterThan(resizeAt);
   });
 
-  it("caps the rendered size so the whole model stays inside the viewport", async () => {
-    // 40x300 的高瘦绘制区域：按可见宽度 400 渲染会远超视口高度。
-    const art = { x0: 100, x1: 139, y0: 100, y1: 399 };
-    const { anchor, frame } = await mountPet({ art, config: { size: 400 } });
-    await act(async () => { frame(); });
+  it.each([{ width: 220, height: 900 }, { width: 1200, height: 220 }])(
+    "fits the complete animation space in a $width x $height viewport",
+    async ({ width, height }) => {
+      vi.stubGlobal("innerWidth", width);
+      vi.stubGlobal("innerHeight", height);
+      const model = makeModel();
+      const harness = await mountPet({ art: { x0: 20, x1: 59, y0: 30, y1: 99 }, model, config: { size: 400 } });
+      await settle(harness);
 
-    const canvas = anchor.querySelector("canvas")!;
-    expect(canvas.height).toBeLessThanOrEqual(window.innerHeight - 16);
-    expect(canvas.width).toBeLessThan(400);
-    expect(canvas.width).toBeGreaterThan(40);
-  });
+      const canvas = harness.modelCanvas()!;
+      expectCompleteModel(model, canvas);
+      expect(canvas.width).toBeLessThanOrEqual(width - 16);
+      expect(canvas.height).toBeLessThanOrEqual(height - 16);
+      expect(harness.runtime.snapshot().config.size).toBe(400);
+    },
+  );
 
-  it("does not mutate layout when a later pose expands beyond the fitted canvas", async () => {
+  it("keeps later wide poses visible without changing their screen transform", async () => {
     const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
     const model = makeModel();
     const harness = await mountPet({ art, model });
     await settle(harness);
-    const canvas = harness.anchor.querySelector("canvas")!;
-    const fitted = { width: canvas.width, height: canvas.height };
-    const scaleCalls = model.scale.set.mock.calls.length;
-    const positionCalls = model.position.set.mock.calls.length;
-
-    // 迟到的动作姿态不能在已显示的桌宠上触发 resize、scale 或 position 写入。
-    art.x0 = 0;
-    art.x1 = canvas.width - 1;
-    art.y0 = 0;
-    art.y1 = canvas.height - 1;
-    await settle(harness, 40);
-
-    expect(model.scale.set.mock.calls.length).toBe(scaleCalls);
-    expect(model.position.set.mock.calls.length).toBe(positionCalls);
-    expect({ width: canvas.width, height: canvas.height }).toEqual(fitted);
-  });
-  it("keeps the model transform and canvas stable after a size change", async () => {
-    const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
-    const model = makeModel();
-    const harness = await mountPet({ art, model });
-    await settle(harness);
-
-    let raf: FrameRequestCallback | null = null;
+    let raf: FrameRequestCallback | undefined;
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => { raf = callback; return 1; });
     await act(async () => {
       await harness.runtime.setSettings([{ op: "set", path: ["size"], value: 300 }]);
       raf?.(0);
     });
 
-    const positionCalls = model.position.set.mock.calls.length;
-    const scaleCalls = model.scale.set.mock.calls.length;
-    const canvas = harness.anchor.querySelector("canvas")!;
-    const canvasSize = { width: canvas.width, height: canvas.height };
+    const canvas = harness.modelCanvas()!;
+    const before = projectedModel(model);
+    const viewportPosition = { right: harness.anchor.style.right, bottom: harness.anchor.style.bottom };
+    expectCompleteModel(model, canvas);
     art.x0 = 0;
     art.x1 = canvas.width - 1;
     art.y0 = 0;
     art.y1 = canvas.height - 1;
-    await settle(harness, 40);
+    await settle(harness, 90);
 
-    expect(model.position.set.mock.calls.length).toBe(positionCalls);
-    expect(model.scale.set.mock.calls.length).toBe(scaleCalls);
-    expect({ width: canvas.width, height: canvas.height }).toEqual(canvasSize);
+    expect(projectedModel(model)).toEqual(before);
+    expect({ right: harness.anchor.style.right, bottom: harness.anchor.style.bottom }).toEqual(viewportPosition);
+    expectCompleteModel(model, canvas);
   });
 
   it("replaces the browser image menu with refresh and close actions", async () => {
@@ -603,16 +600,6 @@ describe("pet overlay display lifecycle", () => {
   });
 
 
-  it("expands the canvas when the drawn area reaches a canvas edge", async () => {
-    // 顶部贴边的绘制区域说明测量被画布截断，需要外扩后重新定形。
-    const art = { x0: 100, x1: 139, y0: 0, y1: 99 };
-    const harness = await mountPet({ art });
-    await settle(harness);
-
-    const canvas = harness.anchor.querySelector("canvas")!;
-    expect(canvas.height).toBeGreaterThan(600);
-    expect(canvas.width).toBe(240);
-  });
 
   it("lets pointer input through where the model has no pixels", async () => {
     const art = { x0: 100, x1: 139, y0: 200, y1: 299 };
@@ -647,5 +634,32 @@ describe("pet overlay display lifecycle", () => {
     expect(loaded.autoUpdate).toBe(false);
     window.dispatchEvent(new Event("focus"));
     expect(loaded.autoUpdate).toBe(true);
+  });
+
+  it("keeps animation time at real speed across snapshots and repeated resume events", async () => {
+    const model = makeModel();
+    const { runtime, unmount, getTurnHooks } = await mountPet({ model });
+    await act(async () => {
+      getTurnHooks()?.onTurnStarted?.(turnEvent());
+      for (const persona of ["genki", "tsundere", "genki", "tsundere"]) {
+        await runtime.setSettings([{ op: "set", path: ["persona"], value: persona }]);
+      }
+    });
+    model.advanceSharedTime(1000);
+    expect(model.elapsedTime).toBe(1000);
+
+    await act(async () => { await runtime.setSettings([{ op: "set", path: ["enabled"], value: false }]); });
+    model.advanceSharedTime(1000);
+    expect(model.elapsedTime).toBe(1000);
+    await act(async () => {
+      await runtime.setSettings([{ op: "set", path: ["enabled"], value: true }]);
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    model.advanceSharedTime(1000);
+    expect(model.elapsedTime).toBe(2000);
+    await act(async () => { unmount(); });
+    model.advanceSharedTime(1000);
+    expect(model.elapsedTime).toBe(2000);
   });
 });

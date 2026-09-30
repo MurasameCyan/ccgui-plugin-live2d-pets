@@ -88,8 +88,6 @@ const ART_WARMUP_SAMPLES = 10
 const ART_WARMUP_TICKS = 40
 /** 预热期间的采样间隔（每 N 帧读一次帧缓冲）。 */
 const ART_SAMPLE_EVERY = 2
-/** 预热后的看门狗间隔（每 N 帧读一次）：只记录迟到姿势，不在运行中改布局。 */
-const ART_WATCHDOG_EVERY = 30
 /** 采样包围盒贴到画布边缘时的外扩量（画布像素）：说明测量被画布截断。 */
 const ART_EDGE_MARGIN_PX = 12
 /** 共用 alpha 阈值：>16 视为可见（绘制区域测量与指针命中判定一致）。 */
@@ -332,8 +330,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // 模型基础尺寸（scale=1 时捕获一次；避免按当前 scale 累积误差）。
   let baseModelW = 0
   let baseModelH = 0
-  // 实测绘制区域：artRef 是缩放基准（预热结束时冻结），artUnion 记录后续姿势覆盖范围，
-  // 但运行中不据此改画布；下一次尺寸变更或刷新模型时统一应用。
+  // 预热只校准主体的显示宽度；动画空间始终包含完整模型画布，不按短暂姿势裁小。
+  // artRef 与 artUnion 在预热结束后冻结，后续动作不再影响布局。
   let artRef: { w: number; h: number; cx: number; cy: number } | null = null
   let artUnion: { x0: number; x1: number; y0: number; y1: number } | null = null
   /** 最近一次适配使用的 scale：读取帧缓冲时把画布像素换算回模型单位。 */
@@ -389,7 +387,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     const shouldRun = enabled && (keepAnimatingWhenInactive || !hidden)
     // Live2D owns a separate shared-ticker subscription; pause only this
     // model, never PIXI.Ticker.shared (which other plugins may also use).
-    if (model) model.autoUpdate = shouldRun
+    // The vendor setter adds a listener on every true assignment, even if already enabled.
+    if (model && model.autoUpdate !== shouldRun) model.autoUpdate = shouldRun
     if (shouldRun) { try { app.ticker.start() } catch { /* 已启动 */ } }
     else { try { app.ticker.stop() } catch { /* 已停止 */ } }
   }
@@ -671,26 +670,36 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     return null
   }
 
-  /** 覆盖范围：实测并集（只增不减）；未测量时等于基准。 */
+  /** 保留完整模型画布供后续动作使用；首段姿势的像素边界不是动画的最大范围。 */
   function artCover(): { x0: number; x1: number; y0: number; y1: number } | null {
-    if (artUnion) return artUnion
     const base = artBase()
-    return base ? rectFromMetrics(base) : null
+    if (!base) return null
+    const measured = artUnion ?? rectFromMetrics(base)
+    return {
+      x0: Math.min(-baseModelW / 2, measured.x0),
+      x1: Math.max(baseModelW / 2, measured.x1),
+      y0: Math.min(-baseModelH / 2, measured.y0),
+      y1: Math.max(baseModelH / 2, measured.y1),
+    }
   }
 
-  /** 请求尺寸 → 实际渲染尺寸：桌宠整只可见（spec §4）。
-   * 画布高 = 覆盖高 * (size - 8) / 基准宽 + 8 ≤ 视口高 - 边距，超出的模型自动缩小。 */
+  /** 主体宽度决定目标缩放；完整动画画布的宽、高共同限制视口内的实际缩放。 */
   function renderedSizeFor(requested: number): number {
     const cover = artCover()
-    let size = Math.min(requested, Math.max(40, window.innerWidth - VIEWPORT_MARGIN))
     const base = artBase()
+    let size = Math.min(requested, Math.max(40, window.innerWidth - VIEWPORT_MARGIN))
     if (cover && base && base.w > 0) {
       const coverW = cover.x1 - cover.x0
       const coverH = cover.y1 - cover.y0
-      const maxHeight = Math.max(80, window.innerHeight - VIEWPORT_MARGIN)
-      if (coverW > 0 && coverH > 0) size = Math.min(size, 8 + ((maxHeight - 8) * coverW) / coverH)
+      const availableW = Math.max(1, window.innerWidth - VIEWPORT_MARGIN - ART_PADDING)
+      const availableH = Math.max(1, window.innerHeight - VIEWPORT_MARGIN - ART_PADDING)
+      if (coverW > 0 && coverH > 0) {
+        size = Math.min(size,
+          ART_PADDING + availableW * base.w / coverW,
+          ART_PADDING + availableH * base.w / coverH)
+      }
     }
-    return Math.max(16, Math.floor(size))
+    return Math.max(ART_PADDING, size)
   }
 
   /** 画布尺寸：宽度至少是尺寸档（覆盖更宽时按覆盖），高度按覆盖范围与当前缩放。 */
@@ -723,8 +732,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     syncDebugPanelWidth()
   }
 
-  /** 按当前尺寸与覆盖范围适配模型：缩放由冻结基准决定，模型钉在画布右/下边；
-   * 运行中不再因迟到姿势改画布或模型位置，尺寸变更/刷新时统一重新适配。 */
+  /** 仅在加载、尺寸或视口变化时适配；固定完整画布，不让姿势变化驱动裁切和重排。 */
   function fitModel(): void {
     if (!model || !canvas) return
     const base = artBase()
@@ -1033,17 +1041,16 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       fitModel()
       // 绘制区域采样必须排在渲染之后：PIXI 把 render 挂在 LOW(-25)，
       // 用默认 NORMAL(0) 的回调会在首帧渲染前读到空帧缓冲（实测 alpha 全 0）。
-      // 预热阶段隐藏画布累积样本 → 冻结缩放基准 → 显示；之后只记录覆盖范围，
-      // 不在动画运行中重设画布或模型位置，避免尺寸调整完成后继续抽动。
+      // 隐藏预热只校准主体宽度，之后保留完整模型画布并停止测量。
+      // 反复收紧到某一姿势会裁掉后续动作；常驻回读也不再有用途。
       try {
         let warmTicks = 0
         let samples = 0
         let settled = 0
-        let revealed = false
         let tick = 0
         const reveal = (): void => {
-          if (revealed || disposed || model !== loaded) return
-          revealed = true
+          if (disposed || model !== loaded) return
+          detachArtMeasure?.()
           artRef = artUnion ? metricsFromRect(artUnion) : null
           applySizeNow(pos.size)
           if (canvas) canvas.style.visibility = ''
@@ -1051,17 +1058,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         const measure = (): void => {
           if (disposed || model !== loaded) { detachArtMeasure?.(); return }
           warmTicks += 1
-          const interval = revealed ? ART_WATCHDOG_EVERY : ART_SAMPLE_EVERY
-          const due = tick++ % interval === 0
+          const due = tick++ % ART_SAMPLE_EVERY === 0
           if (due) {
             const scaleNow = artScale > 0 ? artScale : baseModelW > 0 ? (pos.size - ART_PADDING) / baseModelW : 0
             const grew = sampleArtBounds(scaleNow)
             samples += 1
             settled = grew ? 0 : settled + 1
           }
-          if (!revealed) {
-            if ((samples > 0 && settled >= ART_WARMUP_SAMPLES) || warmTicks >= ART_WARMUP_TICKS) reveal()
-          }
+          if ((samples > 0 && settled >= ART_WARMUP_SAMPLES) || warmTicks >= ART_WARMUP_TICKS) reveal()
         }
         detachArtMeasure?.()
         // UTILITY(-50)：位于 PIXI 渲染（LOW）之后，读到的就是本帧画面。
