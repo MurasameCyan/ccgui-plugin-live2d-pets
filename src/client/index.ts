@@ -350,6 +350,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // 渲染画布相对初始锚点的偏移：扩展留白不移动模型的屏幕原点。
   let canvasRightOffset = 0
   let canvasBottomOffset = 0
+  // 画布四周的透明安全边可越出视口；拖动边界按可见模型区域而不是整张画布计算。
+  let canvasVisibleInsets = { left: 0, right: 0, top: 0, bottom: 0 }
   let detachAnimationCover: (() => void) | null = null
   /** 摘除模型可见边界定位回调。 */
   let detachBubblePosition: (() => void) | null = null
@@ -824,6 +826,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     model.scale.set(scale)
     const originX = canvasSize.width - ART_PADDING / 2 - cover.x1 * scale
     const originY = canvasSize.height - ART_PADDING / 2 + cover.y0 * scale
+    canvasVisibleInsets = {
+      left: Math.max(0, originX + cover.x0 * scale),
+      right: Math.max(0, canvasSize.width - (originX + cover.x1 * scale)),
+      top: Math.max(0, originY - cover.y1 * scale),
+      bottom: Math.max(0, canvasSize.height - (originY - cover.y0 * scale)),
+    }
     model.position.set(originX, originY)
     modelOrigin = { x: originX, y: originY }
   }
@@ -987,10 +995,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   /** 把 right/bottom 钳制在视口内：桌宠可贴右/下边，但不能被拖出画面（spec §4）。 */
   function clampDisplay(next: { right: number; bottom: number; size: number }): { right: number; bottom: number; size: number } {
     const { w, h } = petBoxSize()
-    const minRight = -canvasRightOffset
-    const minBottom = -canvasBottomOffset
-    const maxRight = Math.max(minRight, window.innerWidth - w - canvasRightOffset)
-    const maxBottom = Math.max(minBottom, window.innerHeight - h - canvasBottomOffset)
+    const minRight = -canvasVisibleInsets.right - canvasRightOffset
+    const minBottom = -canvasVisibleInsets.bottom - canvasBottomOffset
+    const maxRight = Math.max(minRight, window.innerWidth - w + canvasVisibleInsets.left - canvasRightOffset)
+    const maxBottom = Math.max(minBottom, window.innerHeight - h + canvasVisibleInsets.top - canvasBottomOffset)
     return {
       right: Math.min(Math.max(Math.ceil(minRight), Math.round(next.right)), Math.floor(maxRight)),
       bottom: Math.min(Math.max(Math.ceil(minBottom), Math.round(next.bottom)), Math.floor(maxBottom)),
@@ -1081,6 +1089,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (bubble && petLayer && bubble.parentNode === petLayer && box) box.appendChild(bubble)
     if (petLayer && petLayer.parentNode) petLayer.parentNode.removeChild(petLayer)
     petLayer = null
+    canvasVisibleInsets = { left: 0, right: 0, top: 0, bottom: 0 }
     removeFallback()
   }
 

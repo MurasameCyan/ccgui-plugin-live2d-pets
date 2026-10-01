@@ -104,6 +104,25 @@ function expectCompleteMesh(model: ReturnType<typeof makeModel>, canvas: HTMLCan
   }
 }
 
+function expectMeshInsideViewport(model: ReturnType<typeof makeModel>, anchor: HTMLDivElement, canvas: HTMLCanvasElement) {
+  const { scale } = projectedModel(model);
+  const [x, y] = model.position.set.mock.calls.at(-1)! as [number, number];
+  const im = model.internalModel;
+  const t = im.localTransform;
+  const canvasLeft = window.innerWidth - parseFloat(anchor.style.right) - canvas.width;
+  const canvasTop = window.innerHeight - parseFloat(anchor.style.bottom) - canvas.height;
+  for (let index = 0; index < model.vertices.length; index += 2) {
+    const vx = model.vertices[index]! * im.pixelsPerUnit + im.originalWidth / 2;
+    const vy = -model.vertices[index + 1]! * im.pixelsPerUnit + im.originalHeight / 2;
+    const px = x + (t.a * vx + t.c * vy + t.tx - model.width / 2) * scale;
+    const py = y + (t.b * vx + t.d * vy + t.ty - model.height / 2) * scale;
+    expect(canvasLeft + px).toBeGreaterThanOrEqual(0);
+    expect(canvasLeft + px).toBeLessThanOrEqual(window.innerWidth);
+    expect(canvasTop + py).toBeGreaterThanOrEqual(0);
+    expect(canvasTop + py).toBeLessThanOrEqual(window.innerHeight);
+  }
+}
+
 let mountId = 0;
 const cleanups: Array<() => void> = [];
 
@@ -302,17 +321,17 @@ describe("pet overlay display lifecycle", () => {
     const width = canvas.width;
     const height = canvas.height;
 
-    // 大幅向左上拖动：不得越出画面（right ≤ 视口宽 - 画布宽）。
+    // 透明安全边可以越出视口 4px，但模型可见像素必须能贴到四条边。
     pointer(canvas, "pointerdown", 500, 500);
     pointer(canvas, "pointermove", -200, -200);
-    expect(anchor.style.right).toBe(`${window.innerWidth - width}px`);
-    expect(anchor.style.bottom).toBe(`${window.innerHeight - height}px`);
+    expect(anchor.style.right).toBe(`${window.innerWidth - width + 4}px`);
+    expect(anchor.style.bottom).toBe(`${window.innerHeight - height + 4}px`);
 
-    // 向右下拖动：贴住右/下边（right/bottom = 0）。
+    // 向右下拖动：可见模型贴住右/下边，画布的 4px 透明边在视口外。
     pointer(canvas, "pointerdown", 0, 0);
     pointer(canvas, "pointermove", 1200, 1200);
-    expect(anchor.style.right).toBe("0px");
-    expect(anchor.style.bottom).toBe("0px");
+    expect(anchor.style.right).toBe("-4px");
+    expect(anchor.style.bottom).toBe("-4px");
     await act(async () => { pointer(canvas, "pointerup", 1200, 1200); });
   });
 
@@ -623,13 +642,7 @@ describe("pet overlay display lifecycle", () => {
       model.vertices.set([-0.9, -1.25, 0.85, -1.25, 0.85, 1.3, -0.9, 1.3]);
       await settle(harness, 1);
       const canvas = harness.modelCanvas()!;
-      expectCompleteMesh(model, canvas);
-      const right = parseFloat(harness.anchor.style.right);
-      const bottom = parseFloat(harness.anchor.style.bottom);
-      expect(right).toBeGreaterThanOrEqual(0);
-      expect(bottom).toBeGreaterThanOrEqual(0);
-      expect(right + canvas.width).toBeLessThanOrEqual(width);
-      expect(bottom + canvas.height).toBeLessThanOrEqual(height);
+      expectMeshInsideViewport(model, harness.anchor, canvas);
       expect(harness.runtime.snapshot().config.size).toBe(400);
       const before = screenOrigin(model, harness.anchor, canvas);
       await act(async () => { await harness.runtime.setSettings([{ op: "set", path: ["persona"], value: "genki" }]); });

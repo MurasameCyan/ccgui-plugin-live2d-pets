@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5] - 2026-10-01
+
+### Fixed
+
+- Let the visible model pixels dock to all four viewport edges while keeping transparent safety padding outside the viewport.
+- Apply the same visible-edge bounds to dragging, restored positions, and viewport resizing without changing the saved size.
+
 ## [1.0.4] - 2026-10-01
 
 ### Fixed
