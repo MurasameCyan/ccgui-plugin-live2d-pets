@@ -1,0 +1,11 @@
+# Vendored third-party assets keep their exact retained bytes: the SHA-256
+# inventory in assets/vendor/README.md is computed from these files, so git
+# must never re-encode their line endings.
+/assets/vendor/** -text
+
+# Build inputs and package payloads stay LF on every platform so checkouts,
+# builds and installable packages are byte-identical between Windows and CI.
+/vendor/** text eol=lf
+/assets/icons/** text eol=lf
+/manifest.json text eol=lf
+/README.md text eol=lf
