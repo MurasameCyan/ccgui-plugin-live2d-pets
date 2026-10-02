@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
@@ -70,8 +70,13 @@ for (const permission of requiredPermissions) {
 const mainPath = resolve(root, "dist/main.js");
 const main = readFileSync(mainPath, "utf8");
 if (Buffer.byteLength(main) > 2 * 1024 * 1024) throw new Error("main.js exceeds 2 MiB");
-for (const pattern of [/window\.__TAURI__/i, /\beval\s*\(/i, /new\s+Function\s*\(/i, /import\s*\(\s*["'`]https?:/i]) {
-  if (pattern.test(main)) throw new Error(`forbidden bundle pattern: ${pattern}`);
+for (const [relativePath, bundle] of [
+  ["dist/main.js", main],
+  ["dist/vendor/live2d-runtime.js", readFileSync(resolve(root, "dist/vendor/live2d-runtime.js"), "utf8")],
+]) {
+  for (const pattern of [/window\.__TAURI__/i, /\beval\s*\(/i, /new\s+Function\s*\(/i, /import\s*\(\s*["'`]https?:/i]) {
+    if (pattern.test(bundle)) throw new Error(`forbidden bundle pattern in ${relativePath}: ${pattern}`);
+  }
 }
 const source = readFileSync(resolve(root, "src/sdk.ts"), "utf8");
 for (const required of [
@@ -87,14 +92,29 @@ for (const relativePath of [
   "dist/main.js",
   "dist/manifest.json",
   "dist/vendor/pixi.min.js",
+  "dist/vendor/pixi.LICENSE",
   "dist/vendor/pixi-unsafe-eval.min.js",
   "dist/vendor/pixi-unsafe-eval.LICENSE",
+  "dist/vendor/live2d.min.js",
+  "dist/vendor/live2d.ReadMe.txt",
   "dist/vendor/live2dcubismcore.min.js",
-  "dist/vendor/live2d-display.cubism4.min.js",
+  "dist/vendor/live2dcubismcore.LICENSE.md",
+  "dist/vendor/live2dcubismcore.RedistributableFiles.txt",
+  "dist/vendor/cubism-framework.LICENSE.md",
+  "dist/vendor/live2d-display.cubism2.min.js",
+  "dist/vendor/pixi-live2d-display.LICENSE",
+  "dist/vendor/live2d-runtime.js",
+  "dist/vendor/README.md",
   "dist/icons/paw-print.svg",
 ]) {
   const path = resolve(root, relativePath);
   if (!statSync(path).isFile()) throw new Error(`missing package artifact: ${relativePath}`);
+}
+for (const relativePath of [
+  "assets/vendor/live2d-display.cubism4.min.js",
+  "dist/vendor/live2d-display.cubism4.min.js",
+]) {
+  if (existsSync(resolve(root, relativePath))) throw new Error(`obsolete runtime artifact: ${relativePath}`);
 }
 
 console.log(`validated ${manifest.id} ${manifest.version}: ${Math.round(statSync(mainPath).size / 1024)} KiB main bundle`);

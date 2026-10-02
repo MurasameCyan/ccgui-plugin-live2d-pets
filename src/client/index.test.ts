@@ -211,7 +211,11 @@ async function mountPet(options: {
   };
   const loadModel = vi.fn((_url: string, _options?: LoadOptions) => options.model ?? makeModel());
   const modelReady = options.modelReady ?? Promise.resolve();
+  // Pixi's own default when its UA sniffing reports mobile: ENV.WEBGL (1).
+  const pixiSettings = { PREFER_ENV: 1 };
   vi.stubGlobal("PIXI", {
+    settings: pixiSettings,
+    ENV: { WEBGL_LEGACY: 0, WEBGL: 1, WEBGL2: 2 },
     Application: class {
       stage = { addChild: vi.fn() };
       ticker = ticker;
@@ -269,6 +273,7 @@ async function mountPet(options: {
   }
   return {
     ...harness, runtime, anchor, scripts, ticker, frame, loadModel, destroy, unmount, calls,
+    pixiSettings,
     isTicking: () => tickerRunning,
     modelCanvas: () => anchor.querySelector("canvas") as HTMLCanvasElement | null,
   };
@@ -404,6 +409,28 @@ describe("pet overlay display lifecycle", () => {
     await act(async () => { await runtime.setSettings([{ op: "set", path: ["enabled"], value: true }]); });
     expect(anchor.style.display).toBe("");
     expect(anchor.textContent).toContain("🐾");
+  });
+
+  it("requests a WebGL 2 context before creating the renderer", async () => {
+    // Cubism 5.3 blend/offscreen models need WebGL 2; Pixi 6.5.10 would
+    // otherwise keep its UA-derived ENV.WEBGL preference and lose those models.
+    const { pixiSettings } = await mountPet();
+    expect(pixiSettings.PREFER_ENV).toBe(2);
+  });
+  it("maps default interaction motions to native legacy group names", async () => {
+    const model = makeModel();
+    model.internalModel.motionManager.definitions = { tap_body: [{}] };
+    const harness = await mountPet({ model });
+    model.motion.mockClear();
+    model.motion.mockImplementation(async (...args: unknown[]) => args[0] === "tap_body");
+    const canvas = harness.modelCanvas()!;
+    await act(async () => {
+      pointer(canvas, "pointerdown", 100, 100);
+      pointer(canvas, "pointerup", 100, 100);
+      await Promise.resolve();
+    });
+
+    expect(model.motion).toHaveBeenCalledWith("tap_body", undefined, 3);
   });
 
   it("honors display updates and pause while a model request is pending", async () => {
@@ -666,6 +693,44 @@ describe("pet overlay display lifecycle", () => {
     expect(bubble.style.top).toBe("36px");
     expect(bubble.style.bottom).toBe("auto");
     expect(bubble.style.transform).toBe("translateX(-50%)");
+  });
+
+  it("covers legacy canvas-space deformation without applying a Cubism 3 pixel scale", async () => {
+    vi.stubGlobal("innerWidth", 4096);
+    vi.stubGlobal("innerHeight", 4096);
+    const model = makeModel();
+    const vertices = new Float32Array([0, 0, 100, 0, 100, 200, 0, 200]);
+    const drawState = { _$IS: [false], _$VS: 1, baseOpacity: 1 };
+    Object.assign(model.internalModel, {
+      pixelsPerUnit: undefined,
+      drawDataCount: 1,
+      getDrawableVertices: () => drawState._$VS ? vertices : new Float32Array(),
+    });
+    const harness = await mountPet({ model, display: { right: 1000, bottom: 1000 } });
+    await settle(harness);
+    const canvas = harness.modelCanvas()!;
+    const before = screenOrigin(model, harness.anchor, canvas);
+    const scale = projectedModel(model).scale;
+    const size = { width: canvas.width, height: canvas.height };
+    vertices.set([-40, -50, 150, -50, 150, 260, -40, 260]);
+    drawState._$VS = 0;
+    await settle(harness, 1);
+    expect({ width: canvas.width, height: canvas.height }).toEqual(size);
+    drawState._$VS = 1;
+    await settle(harness, 1);
+
+    const [x, y] = model.position.set.mock.calls.at(-1)! as [number, number];
+    for (let index = 0; index < vertices.length; index += 2) {
+      const px = x + (vertices[index]! - model.width / 2) * scale;
+      const py = y + (vertices[index + 1]! - model.height / 2) * scale;
+      expect(px).toBeGreaterThanOrEqual(0);
+      expect(py).toBeGreaterThanOrEqual(0);
+      expect(px).toBeLessThanOrEqual(canvas.width);
+      expect(py).toBeLessThanOrEqual(canvas.height);
+    }
+    expect(projectedModel(model).scale).toBe(scale);
+    expect(screenOrigin(model, harness.anchor, canvas).x).toBeCloseTo(before.x, 5);
+    expect(screenOrigin(model, harness.anchor, canvas).y).toBeCloseTo(before.y, 5);
   });
 
   it("includes the model layout transform when covering a deformed mesh", async () => {

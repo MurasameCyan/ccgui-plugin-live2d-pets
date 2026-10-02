@@ -1,5 +1,7 @@
 # Live2D 模型来源设置续接计划
 
+> 路径说明（2026-10-01）：共享宿主集成资料现位于 `S:/AIWorker/desktop-cc-gui/artifacts/live2d/`；下文验收结果及原日志路径仍为 2026-09-18 的记录，未重新执行。
+
 > **面向 AI 代理的工作者：** 使用 `executing-plans` 内联推进，先记录失败回归，再修复并验证；沿用 spec §2、§5 与 ADR-011，不增加模型来源或权限。
 
 **目标：** 自定义模型在远程 URL 与已授权目录之间切换时，保存、动作预览及重新加载使用用户当前选择的来源；迟到的目录选择结果不覆盖已经变更或关闭的编辑器。
@@ -10,8 +12,8 @@
 
 ## 约束和证据
 
-- 可写插件副本：当前工作区下 `ccgui-plugin-live2d-pets`；保留全部此前未提交修改。
-- 原插件 `5f59de9` 与宿主 `feat/live2d-pets` / `de00ba821` 保持只读；不修改父工作区的 Rust 文件。
+- 可写插件副本已按用户要求删除，本计划不再执行；原插件 `S:/AIWorker/desktop-cc-gui/ccgui-plugin-live2d-pets` 保持只读，不与任何临时副本混用。
+- 原插件 `5f59de9` 与宿主 `feat/live2d-pets` / `de00ba821` 保持只读；不修改主工作树 `S:/AIWorker/desktop-cc-gui/desktop-cc-gui-remote-tunnel` 的 Rust 文件。
 - 续接基线：49 项插件测试通过，`bun run typecheck` 通过。
 - GitHub API 请求仍被网络策略拒绝；不运行本地生产构建、提交、推送或 PR，不把源码测试当作 CI 包或原生验收。
 - 已观察到设置组件对远程输入保留 `directoryGrantId` / `directoryPath`，而 runtime 优先使用目录来源；先通过真实 React 输入和保存证明影响。
@@ -50,7 +52,7 @@ node --experimental-strip-types node_modules/vitest/vitest.mjs run src/client/se
 
 ## 任务 3：宿主与交付验证
 
-文件：`artifacts/live2d/host-integration.test.tsx`（相对父工作区）、`docs/spec/live2d-pet-v01.md`、本计划及交接记录。
+文件：`S:/AIWorker/desktop-cc-gui/artifacts/live2d/host-integration.test.tsx`、`docs/spec/live2d-pet-v01.md`、本计划及交接记录。
 
 - [x] 使用实际宿主 `PluginContext` 验证目录来源改远程后的 URL 桥接、存储与权限拒绝；不替换宿主 URL / 权限实现。
 - [x] 对生产差异、异步关闭和来源切换做独立审查；修复确定的本轮问题。

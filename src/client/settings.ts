@@ -3,6 +3,7 @@ import type { ReactNode } from "../sdk";
 import type { PetRuntime, PetStateView } from "../runtime";
 import {
   ANIMATION_SLOTS,
+  isLegacyModelLocation,
   isRemoteModelUrl,
   isSupportedModelLocation,
   type AnimationSlot,
@@ -523,7 +524,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
         setEditGrantPath(grant.path);
         setEditUrl(grant.path);
       }
-      setNotice("目录已授权；请填写目录内的 .model3.json 相对路径。");
+      setNotice("目录已授权；请填写目录内的 .model.json 或 .model3.json 相对路径。");
     }).catch((error) => {
       if (directoryRequests.current[target] !== request) return;
       setNotice(`目录授权失败：${error instanceof Error ? error.message : String(error)}`);
@@ -707,14 +708,14 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       return createElement("div", { key: entry.id, style: { ...rowStyle, display: "flex", flexDirection: "column", gap: 6 } },
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           createElement("input", { style: inputStyle, value: editName, placeholder: "名称", onChange: (event: Event) => setEditName((event.currentTarget as HTMLInputElement).value) }),
-          createElement("input", { style: { ...inputStyle, flex: 1 }, value: editUrl, placeholder: "https://…/model3.json 或已授权目录", onChange: (event: Event) => changeModelUrl("edit", (event.currentTarget as HTMLInputElement).value) }),
+          createElement("input", { style: { ...inputStyle, flex: 1 }, value: editUrl, placeholder: "https://…/model.json 或 model3.json，或已授权目录", onChange: (event: Event) => changeModelUrl("edit", (event.currentTarget as HTMLInputElement).value) }),
           createElement("button", { style: buttonStyle, onClick: saveEdit }, "保存"),
           createElement("button", { style: buttonStyle, onClick: cancelEdit }, "取消"),
         ),
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           createElement("button", { style: panelTabStyle, onClick: () => pickDirectory("edit") }, "重新授权目录"),
           editGrantPath && createElement("span", { style: { fontSize: 11, color: "#888", alignSelf: "center", wordBreak: "break-all" } }, editGrantPath),
-          editGrantId && createElement("input", { style: { ...inputStyle, flex: 1 }, value: editDirectoryPath, placeholder: "目录内相对 .model3.json 路径", onChange: (event: Event) => setEditDirectoryPath((event.currentTarget as HTMLInputElement).value) }),
+          editGrantId && createElement("input", { style: { ...inputStyle, flex: 1 }, value: editDirectoryPath, placeholder: "目录内相对 .model.json 或 .model3.json 路径", onChange: (event: Event) => setEditDirectoryPath((event.currentTarget as HTMLInputElement).value) }),
         ),
         createElement("div", { style: { display: "flex", gap: 4 } },
           createElement("button", { style: editPanel === "spatial" ? panelTabActiveStyle : panelTabStyle, onClick: () => setEditPanel(editPanel === "spatial" ? null : "spatial") }, "空间分区覆盖"),
@@ -725,12 +726,11 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       );
     }
     const flags = [entry.spatialTap && "分区已覆盖", entry.animationMap && "动画已映射"].filter(Boolean).join(" · ");
-    // Cubism 2（.model.json + .moc/.mtn）不被 cubism4 渲染栈支持：明确标注，别只留静态爪印。
-    const cubism2 = /\.model\.json$/i.test(entry.directoryPath ?? "") || /\.model\.json$/i.test(entry.modelUrl ?? "");
+    const cubism2 = isLegacyModelLocation(entry.directoryPath ?? "") || isLegacyModelLocation(entry.modelUrl ?? "");
     return createElement(ModelRow, {
       key: entry.id,
       selected: view.config.model === entry.id,
-      label: `${entry.name}${flags ? ` · ${flags}` : ""}${cubism2 ? " · Cubism 2 模型不受支持" : ""}`,
+      label: `${entry.name}${flags ? ` · ${flags}` : ""}${cubism2 ? " · Cubism 2.1" : ""}`,
       disabled: !writable,
       onSelect: () => write("model", entry.id),
       actions: createElement("span", null,
@@ -753,13 +753,13 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       createElement("div", { style: { ...rowStyle, display: "flex", flexDirection: "column", gap: 6 } },
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           createElement("input", { style: inputStyle, value: newName, placeholder: "名称", disabled: !writable, onChange: (event: Event) => setNewName((event.currentTarget as HTMLInputElement).value) }),
-          createElement("input", { style: { ...inputStyle, flex: 1 }, value: newUrl, placeholder: "https://…/model3.json 或授权目录", disabled: !writable, onChange: (event: Event) => changeModelUrl("new", (event.currentTarget as HTMLInputElement).value) }),
+          createElement("input", { style: { ...inputStyle, flex: 1 }, value: newUrl, placeholder: "https://…/model.json 或 model3.json，或已授权目录", disabled: !writable, onChange: (event: Event) => changeModelUrl("new", (event.currentTarget as HTMLInputElement).value) }),
           createElement("button", { style: buttonStyle, disabled: !writable, onClick: addModel }, "添加"),
         ),
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           createElement("button", { style: panelTabStyle, disabled: !writable, onClick: () => pickDirectory("new") }, "选择本地模型目录"),
           newGrantPath && createElement("span", { style: { fontSize: 11, color: "#888", alignSelf: "center", wordBreak: "break-all" } }, newGrantPath),
-          newGrantId && createElement("input", { style: { ...inputStyle, flex: 1 }, value: newDirectoryPath, placeholder: "目录内相对 .model3.json 路径", disabled: !writable, onChange: (event: Event) => setNewDirectoryPath((event.currentTarget as HTMLInputElement).value) }),
+          newGrantId && createElement("input", { style: { ...inputStyle, flex: 1 }, value: newDirectoryPath, placeholder: "目录内相对 .model.json 或 .model3.json 路径", disabled: !writable, onChange: (event: Event) => setNewDirectoryPath((event.currentTarget as HTMLInputElement).value) }),
         ),
         createElement("div", { style: { display: "flex", gap: 4 } },
           createElement("button", { style: newPanel === "spatial" ? panelTabActiveStyle : panelTabStyle, disabled: !writable, onClick: () => setNewPanel(newPanel === "spatial" ? null : "spatial") }, "空间分区覆盖"),

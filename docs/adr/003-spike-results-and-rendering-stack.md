@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted for the DSH runtime; superseded for the CC GUI port by ADR-011.
 
 ## Date
 

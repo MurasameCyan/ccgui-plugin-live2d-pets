@@ -22,6 +22,8 @@ import {
   type SpatialTapConfig,
 } from "../models";
 
+import { modelMotionDefinitions, modelMotionList, resolveMotionNames } from "../model-motions";
+
 interface DisplayLike { right: number; bottom: number; size: number }
 
 interface DebugMotionItem {
@@ -46,11 +48,13 @@ interface ModelLike {
     originalWidth?: number
     originalHeight?: number
     pixelsPerUnit?: number
+    drawDataCount?: number
+    getDrawableVertices?(index: number): ArrayLike<number>
     localTransform?: { a: number; b: number; c: number; d: number; tx: number; ty: number }
     coreModel?: {
-      getDrawableCount(): number
-      getDrawableVertices(index: number): ArrayLike<number>
-      getDrawableOpacity(index: number): number
+      getDrawableCount?(): number
+      getDrawableVertices?(index: number): ArrayLike<number>
+      getDrawableOpacity?(index: number): number
     }
     hitAreas?: Record<string, unknown>
     focusController?: { focus(x: number, y: number, instant?: boolean): void }
@@ -70,8 +74,12 @@ const VENDOR_SCRIPTS = [
   "vendor/pixi.min.js",
   // Replaces PIXI's generated uniform sync functions without weakening CSP.
   "vendor/pixi-unsafe-eval.min.js",
+  // Cubism 2.1 Core and the modern Cubism Core are separate globals.
+  "vendor/live2d.min.js",
   "vendor/live2dcubismcore.min.js",
-  "vendor/live2d-display.cubism4.min.js",
+  "vendor/live2d-display.cubism2.min.js",
+  // Registers the official Cubism 5.3 SDK for Web (R5) runtime in the shared factory.
+  "vendor/live2d-runtime.js",
 ];
 
 
@@ -164,6 +172,9 @@ declare const PIXI: {
     render(): void;
     destroy(remove: boolean): void;
   };
+  /** Pixi 6.5.10 derives PREFER_ENV from UA sniffing; Cubism 5.3 needs WebGL 2. */
+  settings?: { PREFER_ENV?: number };
+  ENV?: { WEBGL2?: number };
   live2d?: { Live2DModel?: {
     fromSync(url: string, options: {
       autoInteract: boolean;
@@ -302,7 +313,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let debugEl: HTMLDivElement | null = null
   /** 调试面板“动画预览”数据：当前模型 MotionManager 暴露的全部具体动画。 */
   let debugMotionList: DebugMotionItem[] = []
-  /** 按模型 URL 缓存原生动画列表，避免重复请求同一份 .model3.json。 */
+  /** 按模型 URL 缓存原生动画列表，避免重复请求同一份 model.json/model3.json。 */
   const motionListCache = new Map<string, DebugMotionItem[]>()
   let debugMotionSelect: HTMLSelectElement | null = null
   /** 调试面板状态文本容器：与演示按钮/动画预览并列，避免被 textContent 覆盖。 */
@@ -567,20 +578,23 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
    */
   function motionNamesFor(slot: AnimationSlot): string[] {
     const configured = motionMap[slot]
+    let names: string[]
     if (configured && configured.length > 0) {
-      const names = [...configured]
+      names = [...configured]
       for (let i = names.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1))
         ;[names[i], names[j]] = [names[j], names[i]]
       }
-      // 配置的动作组全部失败时，仍回退到默认候选，避免模型/配置变化后完全无动作
+      // 配置的动作组全部失败时，仍回退到默认候选，避免模型/配置变化后完全无动作。
       const defaults = DEFAULT_MOTION_MAP[slot] ?? []
       for (const name of defaults) {
         if (!names.includes(name)) names.push(name)
       }
-      return names
+    } else {
+      names = [...(DEFAULT_MOTION_MAP[slot] ?? [])]
     }
-    return DEFAULT_MOTION_MAP[slot] ?? []
+    const nativeGroups = Object.keys(model?.internalModel?.motionManager?.definitions ?? {})
+    return resolveMotionNames(names, nativeGroups)
   }
 
   /**
@@ -841,35 +855,60 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     const internal = model?.internalModel
     const core = internal?.coreModel
     const transform = internal?.localTransform
-    const ppu = internal?.pixelsPerUnit
     const originalW = internal?.originalWidth
     const originalH = internal?.originalHeight
     const cover = animationCover
-    if (!core || !transform || !ppu || !originalW || !originalH || !cover || !(artScale > 0)) return
-    // 直接读 Core 的借用顶点数组；InternalModel.getDrawableVertices() 会逐网格复制。
-    const ax = transform.a * ppu
-    const bx = -transform.c * ppu
-    const tx = transform.a * originalW / 2 + transform.c * originalH / 2 + transform.tx - baseModelW / 2
-    const ay = -transform.b * ppu
-    const by = transform.d * ppu
-    const ty = baseModelH / 2 - transform.b * originalW / 2 - transform.d * originalH / 2 - transform.ty
+    if (!internal || !core || !transform || !originalW || !originalH || !cover || !(artScale > 0)) return
+
+    // Both adapters expose drawable vertices in model-canvas coordinates through
+    // InternalModel.getDrawableVertices(). The test fallback below models the
+    // older normalized Core API used by existing unit fixtures.
+    const directVertices = internal.getDrawableVertices
+    const directCount = internal.drawDataCount ?? core.getDrawableCount?.()
+    const directOpacity = core.getDrawableOpacity
     let x0 = Infinity
     let x1 = -Infinity
     let y0 = Infinity
     let y1 = -Infinity
-    const count = core.getDrawableCount()
-    for (let drawable = 0; drawable < count; drawable += 1) {
-      if (core.getDrawableOpacity(drawable) <= 0) continue
-      const vertices = core.getDrawableVertices(drawable)
-      for (let index = 0; index < vertices.length; index += 2) {
-        const vx = vertices[index]!
-        const vy = vertices[index + 1]!
-        const x = ax * vx + bx * vy + tx
-        const y = ay * vx + by * vy + ty
-        x0 = Math.min(x0, x)
-        x1 = Math.max(x1, x)
-        y0 = Math.min(y0, y)
-        y1 = Math.max(y1, y)
+
+    if (directVertices && directCount !== undefined) {
+      for (let drawable = 0; drawable < directCount; drawable += 1) {
+        if (directOpacity && directOpacity(drawable) <= 0) continue
+        const vertices = directVertices(drawable)
+        for (let index = 0; index < vertices.length; index += 2) {
+          const canvasX = vertices[index]!
+          const canvasY = vertices[index + 1]!
+          const x = transform.a * canvasX + transform.c * canvasY + transform.tx - baseModelW / 2
+          const y = -transform.b * canvasX - transform.d * canvasY + baseModelH / 2 - transform.ty
+          x0 = Math.min(x0, x)
+          x1 = Math.max(x1, x)
+          y0 = Math.min(y0, y)
+          y1 = Math.max(y1, y)
+        }
+      }
+    } else {
+      const ppu = internal.pixelsPerUnit
+      if (!ppu || !core.getDrawableCount || !core.getDrawableVertices || !core.getDrawableOpacity) return
+      const ax = transform.a * ppu
+      const bx = -transform.c * ppu
+      const tx = transform.a * originalW / 2 + transform.c * originalH / 2 + transform.tx - baseModelW / 2
+      const ay = -transform.b * ppu
+      const by = transform.d * ppu
+      const ty = baseModelH / 2 - transform.b * originalW / 2 - transform.d * originalH / 2 - transform.ty
+      const count = core.getDrawableCount()
+      for (let drawable = 0; drawable < count; drawable += 1) {
+        if (core.getDrawableOpacity(drawable) <= 0) continue
+        const vertices = core.getDrawableVertices(drawable)
+        for (let index = 0; index < vertices.length; index += 2) {
+          const vx = vertices[index]!
+          const vy = vertices[index + 1]!
+          const x = ax * vx + bx * vy + tx
+          const y = ay * vx + by * vy + ty
+          x0 = Math.min(x0, x)
+          x1 = Math.max(x1, x)
+          y0 = Math.min(y0, y)
+          y1 = Math.max(y1, y)
+        }
       }
     }
     if (!Number.isFinite(x0 + x1 + y0 + y1)) return
@@ -1129,6 +1168,18 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
 
       const M = PIXI.live2d?.Live2DModel
       if (!M) throw new Error('Live2DModel 不可用')
+
+      // Pixi 6.5.10 computes `PREFER_ENV = isMobile.any ? ENV.WEBGL : ENV.WEBGL2`,
+      // so a UA that trips its mobile detection requests WebGL 1 even where
+      // WebGL 2 exists. R5's Cubism 5.3 blend path needs
+      // WebGL2RenderingContext.blitFramebuffer (CubismRenderTarget_WebGL.copyBuffer),
+      // which would then throw for every 5.3 blend model. Raise the preference:
+      // Pixi's createContext still falls back to WebGL 1 when webgl2 is
+      // unavailable, so this never breaks a model WebGL 1 could already render.
+      const preferWebGL2 = PIXI.ENV?.WEBGL2
+      if (PIXI.settings && typeof preferWebGL2 === 'number' && (PIXI.settings.PREFER_ENV ?? -1) < preferWebGL2) {
+        PIXI.settings.PREFER_ENV = preferWebGL2
+      }
 
       app = new PIXI.Application({
         view: canvas,
@@ -1442,7 +1493,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     }
   }
 
-  /** 从模型原生 .model3.json 拉取全部具体动画列表（不经过插件状态/映射逻辑）。 */
+  /** 从模型原生 settings JSON 拉取全部具体动画列表（不经过插件状态/映射逻辑）。 */
   async function refreshDebugMotionGroups(): Promise<void> {
     const url = currentModelUrl
     const currentModel = model
@@ -1458,21 +1509,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     try {
       const res = await fetch(url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json() as {
-        FileReferences?: { Motions?: Record<string, Array<{ File?: unknown } | unknown>> }
-        Motions?: Record<string, Array<{ File?: unknown } | unknown>>
-      }
-      const motions = data?.FileReferences?.Motions ?? data?.Motions ?? {}
-      const list: DebugMotionItem[] = []
-      for (const [group, items] of Object.entries(motions)) {
-        if (!Array.isArray(items)) continue
-        items.forEach((motion, index) => {
-          const file = typeof motion === 'object' && motion !== null && 'File' in motion
-            ? String((motion as { File?: unknown }).File ?? index)
-            : String(index)
-          list.push({ group, index, label: `${group} / ${file}` })
-        })
-      }
+      const list = modelMotionList(modelMotionDefinitions(await res.json()))
       motionListCache.set(url, list)
       // 防止异步返回时模型/面板已经切换
       if (model !== currentModel || !debugMotionSelect) return
@@ -1480,17 +1517,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       updateDebugMotionSelect()
     } catch {
       // 原生 JSON 拉取失败时，退回到运行时 definitions（至少还能看到列表）
-      const defs = currentModel.internalModel?.motionManager?.definitions ?? {}
-      const list: DebugMotionItem[] = []
-      for (const [group, motions] of Object.entries(defs)) {
-        if (!Array.isArray(motions)) continue
-        motions.forEach((motion, index) => {
-          const file = typeof motion === 'object' && motion !== null && 'File' in motion
-            ? String((motion as { File?: unknown }).File ?? index)
-            : String(index)
-          list.push({ group, index, label: `${group} / ${file}` })
-        })
-      }
+      const definitions = currentModel.internalModel?.motionManager?.definitions ?? {}
+      const list = modelMotionList(modelMotionDefinitions({ motions: definitions }))
       if (model !== currentModel || !debugMotionSelect) return
       debugMotionList = list
       updateDebugMotionSelect()

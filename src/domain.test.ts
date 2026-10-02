@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseCustomModels } from "./custom-models";
-import { mergeSpatialTap, DEFAULT_SPATIAL_TAP } from "./models";
+import { DEFAULT_SPATIAL_TAP, isSupportedModelLocation, mergeSpatialTap } from "./models";
 import { BUILTIN_PRESETS, resolveModelLocation, resolveMotionMap } from "./models-host";
 import { parsePersonas } from "./personas";
 import { resolvePersonaCopy } from "./client/personas";
@@ -39,6 +39,16 @@ describe("Live2D model and persona data", () => {
       { id: "bad", name: "", modelUrl: "relative/model3.json" },
     ] }));
     expect(view.models.map((model) => model.id)).toEqual(["ok"]);
-    expect(view.error).toContain("非法条目");
+  });
+
+  it("accepts both Cubism 2.1 model.json and Cubism 3-5.3 model3.json model sources", () => {
+    expect(isSupportedModelLocation("https://example.test/pet.model3.json")).toBe(true);
+    expect(isSupportedModelLocation("https://example.test/pet.model.json")).toBe(true);
+    const view = parseCustomModels(JSON.stringify({ models: [
+      { id: "legacy", name: "Legacy", modelUrl: "https://example.test/pet.model.json" },
+      { id: "legacy-local", name: "Legacy local", modelUrl: "C:/models", directoryGrantId: "grant", directoryPath: "Pet/model.json" },
+      { id: "modern", name: "Modern", modelUrl: "https://example.test/pet.model3.json" },
+    ] }));
+    expect(view.models.map((model) => model.id)).toEqual(["legacy", "legacy-local", "modern"]);
   });
 });

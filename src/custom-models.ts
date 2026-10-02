@@ -4,7 +4,7 @@ import { isSupportedModelLocation } from "./models";
 export const CUSTOM_MODELS_FILENAME = "custom-models.jsonc";
 export interface CustomModelsFileView { models: CustomModelEntry[]; error: string | null; path: string; }
 const HEADER = `// CC GUI Live2D Pets 自定义模型（JSONC）。
-// 远程模型填写 modelUrl；本地模型请在设置中选择模型目录后保存。
+// 远程模型填写 model.json 或 model3.json URL；本地模型请在设置中选择模型目录后保存。
 // 可选字段：spatialTap / animationMap。`;
 export function serializeCustomModels(models: readonly CustomModelEntry[]): string {
   return `${HEADER}\n${JSON.stringify({ models }, null, 2)}\n`;

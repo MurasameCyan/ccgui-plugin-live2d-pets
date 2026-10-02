@@ -1,5 +1,7 @@
 # Live2D 宿主 JS 集成验收计划
 
+> 路径说明（2026-10-01）：定位与复用命令使用迁移后的目录；任务状态、测试结果和网络限制仍是 2026-09-18 的记录，不代表本次重新执行。
+
 > **面向 AI 代理的工作者：** 使用 `executing-plans` 内联执行，保持测试、实现、复核检查点；生产代码修复必须先有失败回归。
 
 **目标：** 补齐已接受 spec §1–4 的插件入口、真实宿主 SDK、overlay 及会话状态集成验证，定位并修复其中可复现的契约问题。
@@ -10,13 +12,13 @@
 
 ## 边界与落点
 
-- 原宿主、原插件只读；继续在 `S:\AIWorker\desktop-cc-gui\ccgui-plugin-live2d-pets` 修改插件，保持父工作区既有改动。
-- 宿主集成测试位于父工作区 `artifacts/live2d/`，通过 `LIVE2D_HOST_ROOT` 指定宿主源码；不把宿主内部依赖带入插件发布包。
+- 可写插件工作副本已按用户要求删除，本计划不再执行；原插件 `S:\AIWorker\desktop-cc-gui\ccgui-plugin-live2d-pets` 保持只读，主工作树 `S:/AIWorker/desktop-cc-gui/desktop-cc-gui-remote-tunnel` 的既有改动不变。
+- 宿主集成资料位于 `S:/AIWorker/desktop-cc-gui/artifacts/live2d/`，仅作既有交接资料；不把宿主内部依赖带入插件发布包。
 - 不执行本地生产构建、提交、推送或 PR。当前 GitHub API 访问被网络策略拦截，CI 与真实模型验收单独保留。
 
 ## 任务 1：真实宿主集成基线
 
-文件：父工作区 `artifacts/live2d/host-integration.test.tsx`、`artifacts/live2d/host-integration.config.mjs`。
+文件：`S:/AIWorker/desktop-cc-gui/artifacts/live2d/host-integration.test.tsx`、`S:/AIWorker/desktop-cc-gui/artifacts/live2d/host-integration.config.mjs`。
 
 - [x] 配置实际宿主与插件源码别名，共用宿主 React，测试目录与缓存写入限定在 artifacts。
 - [x] 通过实际 manifest 和 `activate` 加载，断言 loader 状态、三个注册项、真实 overlay 容器及桥接后的 vendor / 模型 URL。
@@ -54,25 +56,20 @@ expect(runtime.snapshot().state).toBe("idle");
 
 ## 任务 3：复核与交接
 
-文件：`docs/spec/live2d-pet-v01.md`、本计划、父工作区交接与补丁。
+文件：`docs/spec/live2d-pet-v01.md`、本计划，以及共享根 `S:/AIWorker/desktop-cc-gui/artifacts/live2d/` 中的交接与补丁。
 
 - [x] 运行完整插件 Vitest、类型检查、实际宿主集成和既有 SDK 定向回归。
 - [x] 复核生产差异与失败测试，明确区分源码集成、blob 加载、CI 包和原生验收。
 - [x] 更新行为规格和交接，重新导出补丁与校验值，并在原插件基线执行只读适用性检查。
 
-验证命令（宿主工作树 cwd）：
+验证命令（cwd 为宿主工作树 `S:/AIWorker/desktop-cc-gui/desktop-cc-gui-feat-live2d-pets`）：
 
 ```powershell
-$env:LIVE2D_HOST_ROOT = 'S:/AIWorker/desktop-cc-gui-live2d'
+$env:LIVE2D_HOST_ROOT = 'S:/AIWorker/desktop-cc-gui/desktop-cc-gui-feat-live2d-pets'
 node node_modules/vitest/vitest.mjs run --config 'S:/AIWorker/desktop-cc-gui/artifacts/live2d/host-integration.config.mjs' --configLoader native --pool=threads --no-cache
 ```
 
-插件副本内：
-
-```powershell
-node --experimental-strip-types node_modules/vitest/vitest.mjs run --pool=threads --configLoader native --no-cache
-bun run typecheck
-```
+插件工作副本已按用户要求删除；不执行该工作副本内的复跑命令，也不将原插件仓库作为写入目标。
 
 ## 证据与范围修正
 

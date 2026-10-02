@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Support Cubism 2.1 `.model.json` models alongside the existing Cubism 3–5.3 `.model3.json` path, including legacy motion metadata and the bundled legacy runtime assets.
+
+### Fixed
+
+- Request a WebGL 2 context explicitly. Pixi 6.5.10 otherwise selects WebGL 1 whenever its user-agent check reports a mobile device, which prevents Cubism 5.3 blend-mode models from rendering.
+
 ## [1.0.5] - 2026-10-01
 
 ### Fixed

@@ -3,7 +3,7 @@
   // ⚠ 这是随包分发的内置模型配置：修改会随插件升级/重装被覆盖。
   //   仅用于本地开发调试；正式自定义请使用设置面板中的「自定义模型」。
   // 字段说明：
-  //   - modelUrl   : .model3.json URL，模型一律 URL 直载，不随包分发模型文件
+  //   - modelUrl   : .model3.json URL（内置清单使用现代格式），模型一律 URL 直载，不随包分发模型文件
   //   - spatialTap : 可选空间回退分区覆盖
   //   - animationMap: 可选状态/互动部位动画映射（动作组名列表）
   "version": 3,
@@ -83,6 +83,6 @@
   ],
   "loadFromUrl": {
     "supported": true,
-    "note": "用户可在设置中输入任意 .model3.json URL 加载自备模型（零许可风险路径，spec §6）"
+    "note": "用户可在设置中输入任意 .model.json 或 .model3.json URL 加载自备模型（零许可风险路径，spec §6）"
   }
 }

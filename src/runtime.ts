@@ -13,6 +13,8 @@ import { parsePersonas, PERSONAS_TEMPLATE, type PersonasFileView } from "./perso
 import { DEFAULT_PERSONA_ID, type CustomPersonaDef } from "./persona-shared";
 import { type CustomModelEntry, type MotionMap, type SpatialTapConfig } from "./models";
 import { listBuiltinPresets, resolveModelLocation, resolveMotionMap, resolveSpatialTap } from "./models-host";
+import { modelMotionDefinitions } from "./model-motions";
+
 
 export type PetState = "idle" | "thinking" | "error" | "done" | "waiting";
 export type MaxFpsOption = 0 | 30 | 60;
@@ -487,10 +489,7 @@ export class PetRuntime {
   async fetchMotionGroups(entry: CustomModelEntry | string): Promise<string[]> {
     const response = await fetch(this.modelAssetUrl(entry));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = recordOf(await response.json());
-    const fileReferences = recordOf(data.FileReferences);
-    const motions = recordOf(fileReferences.Motions ?? data.Motions);
-    return Object.keys(motions);
+    return Object.keys(modelMotionDefinitions(await response.json()));
   }
   async revealPath(path: string): Promise<boolean> {
     try {

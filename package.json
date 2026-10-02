@@ -6,8 +6,10 @@
   "packageManager": "bun@1.4.1",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "typecheck:vendor": "tsc --project vendor/tsconfig.json --noEmit",
     "test": "vitest run --pool=threads",
-    "build": "tsc --noEmit && vite build",
+    "build:vendor": "bun run typecheck:vendor && node scripts/build-vendor.mjs",
+    "build": "tsc --noEmit && vite build && bun run build:vendor",
     "validate": "bun run typecheck && bun run test && bun run build && node scripts/validate.mjs"
   },
   "devDependencies": {
@@ -15,6 +17,8 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "jsdom": "26.1.0",
+    "pixi-live2d-display": "0.4.0",
+    "pixi.js": "6.5.10",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "typescript": "^5.6.2",

@@ -12,9 +12,9 @@ import { makeContext } from "../test-context";
 import { PetSettingsSection } from "./settings";
 
 const REMOTE_URL = "https://cdn.jsdelivr.net/models/remote.model3.json";
-const NEW_URL_FIELD = "https://…/model3.json 或授权目录";
-const EDIT_URL_FIELD = "https://…/model3.json 或已授权目录";
-const RELATIVE_PATH_FIELD = "目录内相对 .model3.json 路径";
+const NEW_URL_FIELD = "https://…/model.json 或 model3.json，或已授权目录";
+const EDIT_URL_FIELD = "https://…/model.json 或 model3.json，或已授权目录";
+const RELATIVE_PATH_FIELD = "目录内相对 .model.json 或 .model3.json 路径";
 const LOCAL_MODEL: CustomModelEntry = {
   id: "local-pet", name: "Local pet", modelUrl: "C:/models",
   directoryGrantId: "grant", directoryPath: "Pet/Pet.model3.json",
@@ -207,14 +207,40 @@ describe("pet settings model sources", () => {
     expect(runtime.snapshot().config.keepAnimatingWhenInactive).toBe(true);
   });
 
-  it("marks Cubism 2 model entries as unsupported", async () => {
+
+  it("labels Cubism 2.1 model entries instead of treating them as unsupported", async () => {
     const legacy: CustomModelEntry = {
       id: "legacy-pet", name: "Legacy", modelUrl: "C:/legacy",
-      directoryGrantId: "grant", directoryPath: "Bronya.model.json",
+      directoryGrantId: "grant", directoryPath: "Shizuku/model.json",
     };
     const { container } = await mountSettings([legacy]);
-    const rows = customRows(container);
-    expect(rows.textContent).toContain("Cubism 2 模型不受支持");
+    expect(customRows(container).textContent).toContain("Cubism 2.1");
+    expect(customRows(container).textContent).not.toContain("不受支持");
+  });
+
+  it("maps legacy motion groups and keeps their spelling after saving", async () => {
+    const legacy: CustomModelEntry = {
+      id: "legacy-pet", name: "Legacy", modelUrl: "C:/legacy",
+      directoryGrantId: "grant", directoryPath: "Shizuku/model.json",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ model: "model.moc", textures: [], motions: {
+        idle: [{ file: "idle.mtn" }], tap_body: [{ file: "touch.mtn" }],
+      } }),
+    })));
+    const { container, runtime, savedModels } = await mountSettings([legacy], legacy.id);
+    await click(customRows(container), "修改");
+    await click(customRows(container), "动画映射");
+    const label = [...customRows(container).querySelectorAll("label")].find((node) =>
+      node.textContent?.trim() === "tap_body" && node.parentElement?.previousElementSibling?.textContent === "摸身体",
+    );
+    expect(label, "legacy body motion choice").toBeDefined();
+    await act(async () => { label!.querySelector<HTMLInputElement>("input")!.click(); });
+    await click(customRows(container), "保存");
+    expect(savedModels()[0]?.animationMap).toEqual({ body: ["tap_body"] });
+    expect(runtime.snapshot().config.modelUrl).toBe("plugin://directory/grant/Shizuku/model.json");
+    expect(runtime.snapshot().config.motionMap.body).toEqual(["tap_body"]);
   });
 
   it("adds a granted directory model and retains its selected source after reload", async () => {

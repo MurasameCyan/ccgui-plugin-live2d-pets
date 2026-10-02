@@ -36,10 +36,16 @@ export function isLocalModelPath(value: string): boolean {
 }
 export function isSupportedModelLocation(value: string): boolean { return isRemoteModelUrl(value) || isLocalModelPath(value); }
 
+/** 判断模型来源是否指向 Cubism 2.1 的 model.json 配置。查询串和片段不影响格式判断。 */
+export function isLegacyModelLocation(value: string): boolean {
+  const path = value.trim().split(/[?#]/, 1)[0] ?? "";
+  return /(?:^|[\\/])(?:model|[^\\/]+\.model)\.json$/i.test(path);
+}
+
 export interface CustomModelEntry {
   id: string;
   name: string;
-  /** Remote .model3.json URL, or the original local path for migration/display. */
+  /** Remote .model.json or .model3.json URL, or the original local path for migration/display. */
   modelUrl: string;
   /** Directory grant used for local models under the CC GUI asset bridge. */
   directoryGrantId?: string;
