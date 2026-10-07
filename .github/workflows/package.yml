@@ -2,7 +2,7 @@ name: Test and package plugin
 
 on:
   push:
-    branches: [fix/sdk-03-compat]
+    branches: [main]
   workflow_dispatch:
     inputs:
       delivery:
