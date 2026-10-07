@@ -64,6 +64,8 @@ const CONFIG_KEYS: readonly (keyof PetConfig)[] = [
   "keepAnimatingWhenInactive",
 ];
 const DONE_HOLD_MS = 3500;
+/** 已退休回合 id 的保留上限：迟到事件不得复活它们，但记录不能无界增长。 */
+const RETIRED_TURNS_LIMIT = 64;
 const PERSONAS_FILE = "personas.jsonc";
 const CUSTOM_MODELS_FILE = "custom-models.jsonc";
 const DISPLAY_KEY = "display";
@@ -128,6 +130,9 @@ export class PetRuntime {
   /** 当前激活会话：只有它的回合驱动桌宠表现（spec §3）。 */
   private activeSession: SessionRef | null = null;
   private readonly turns: TrackedTurn[] = [];
+  /** 已到终态/已释放的回合 id（`engine\u0000turnId`，插入序）：区分「本 runtime 没见过的回合」
+   *  与「已经结算过的回合」，前者要补表现，后者的迟到事件必须继续忽略。 */
+  private readonly retiredTurns = new Set<string>();
   private version = 0;
   private readyState = false;
   private readonly listeners = new Set<Listener>();
@@ -224,6 +229,34 @@ export class PetRuntime {
     return this.turns.find((turn) => this.matchesSession(turn, ref));
   }
 
+  /** 回合内事件按 `turnId` 定位：宿主可以在回合中途改写 native session id
+   *  （`engine-events.ts` 的 `onSession` 无条件改写，且不发 `session://activated`），
+   *  此时只有 `turnId` 还稳定。命中后把新 id 落到跟踪记录与激活引用上，
+   *  否则后续事件与表现都会按旧身份失配。 */
+  private findTurnForEvent(ref: SessionRef, turnId: string): TrackedTurn | undefined {
+    const byTurn = this.turns.find((turn) => turn.turnId === turnId && turn.engine === ref.engine);
+    if (byTurn) {
+      this.adoptSessionId(byTurn, ref.sessionId);
+      return byTurn;
+    }
+    // 回退到会话匹配只对「还没结算的回合」有效：已结算的记录（done 保持中、error 等下一回合）
+    // 仍留在列表里，若让它接住一个新的 turnId，新回合会被当成迟到事件丢弃。
+    const bySession = this.findTurn(ref);
+    if (bySession && (!bySession.turnId || bySession.turnId === turnId)) return bySession;
+    return undefined;
+  }
+
+  /** 把宿主改写后的 native session id 同步到跟踪记录；激活引用指向同一会话时一并跟进。 */
+  private adoptSessionId(turn: TrackedTurn, sessionId: string | null): void {
+    if (!sessionId || turn.sessionId === sessionId) return;
+    const previous = turn.sessionId;
+    const active = this.activeSession;
+    turn.sessionId = sessionId;
+    if (active && active.engine === turn.engine && (active.sessionId ?? null) === previous) {
+      active.sessionId = sessionId;
+    }
+  }
+
   private upsertTurn(ref: SessionRef, turnId: string, state: PetState): TrackedTurn {
     const existing = this.findTurn(ref);
     if (existing) {
@@ -247,8 +280,22 @@ export class PetRuntime {
 
   private dropTurn(turn: TrackedTurn): void {
     this.clearTurnTimer(turn);
+    this.retireTurn(turn);
     const index = this.turns.indexOf(turn);
     if (index >= 0) this.turns.splice(index, 1);
+  }
+
+  /** 记下回合 id 已结算；超出上限时按插入序淘汰最旧的一条。 */
+  private retireTurn(turn: TrackedTurn): void {
+    if (!turn.turnId) return;
+    const key = `${turn.engine}\u0000${turn.turnId}`;
+    this.retiredTurns.delete(key);
+    this.retiredTurns.add(key);
+    while (this.retiredTurns.size > RETIRED_TURNS_LIMIT) {
+      const oldest = this.retiredTurns.values().next();
+      if (oldest.done) break;
+      this.retiredTurns.delete(oldest.value);
+    }
   }
 
   private clearTurnTimer(turn: TrackedTurn): void {
@@ -295,22 +342,47 @@ export class PetRuntime {
   }
 
   private onRuntimeEvent(event: NormalizedRuntimeEvent): void {
-    const turn = this.findTurn({ engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspacePath });
+    const turn = this.findTurnForEvent(
+      { engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspacePath },
+      event.turnId,
+    );
     if (!turn || !turn.turnId || turn.turnId !== event.turnId) return;
     if (event.kind === "permission-requested") turn.state = "waiting";
     else if (event.kind === "assistant-completed") { this.holdDone(turn); return; }
     else if (event.kind === "turn-cancelled") this.dropTurn(turn);
-    else if (event.kind === "turn-failed") { turn.state = "error"; turn.turnId = null; }
+    else if (event.kind === "turn-failed") { this.retireTurn(turn); turn.state = "error"; turn.turnId = null; }
     else if (event.kind === "runtime-exited" && turn.state !== "done") this.dropTurn(turn);
     else return;
     this.refresh();
   }
   private afterTurn(event: AfterTurnEvent): void {
     if (!isTerminal(event)) return;
-    const turn = this.findTurn({ engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspace.path });
-    if (!turn || !turn.turnId || turn.turnId !== event.turnId) return;
-    if (event.status === "completed") { this.holdDone(turn); return; }
-    if (event.status === "failed") { turn.state = "error"; turn.turnId = null; }
+    const ref: SessionRef = { engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspace.path };
+    const turn = this.findTurnForEvent(ref, event.turnId);
+    if (!turn) {
+      // 已结算过的回合：迟到事件不得复活它（会话关闭、取消、运行时退出、done 保持到期都走这里）。
+      if (this.retiredTurns.has(`${event.engine}\u0000${event.turnId}`)) return;
+      // 本 runtime 没见过这个回合（插件热重载/重新启用/overlay 换了新 runtime）：
+      // 仍要表现终态，否则完成与失败被静默丢弃、永远停在 idle。
+      // 取消没有可表现的反馈，照旧忽略。
+      if (event.status === "cancelled") return;
+      const adopted = this.upsertTurn(ref, event.turnId, "thinking");
+      const active = this.activeSession;
+      if (!active || this.matchesSession(active, ref)) {
+        this.activeSession = ref;
+        this.agent = event.engine;
+      }
+      this.settleTurn(adopted, event.status);
+      return;
+    }
+    if (!turn.turnId || turn.turnId !== event.turnId) return;
+    this.settleTurn(turn, event.status);
+  }
+
+  /** 终态落盘：完成保持 DONE_HOLD_MS，失败停在 error 等下一回合，取消直接释放。 */
+  private settleTurn(turn: TrackedTurn, status: AfterTurnEvent["status"]): void {
+    if (status === "completed") { this.holdDone(turn); return; }
+    if (status === "failed") { this.retireTurn(turn); turn.state = "error"; turn.turnId = null; }
     else this.dropTurn(turn);
     this.refresh();
   }

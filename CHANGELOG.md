@@ -9,6 +9,21 @@
 ### Fixed
 
 - Request a WebGL 2 context explicitly. Pixi 6.5.10 otherwise selects WebGL 1 whenever its user-agent check reports a mobile device, which prevents Cubism 5.3 blend-mode models from rendering.
+- Try the built-in default motion candidates in declaration order. The resolved
+  animation map previously carried the defaults as if they were user overrides, so the
+  ordered chain was shuffled and its trailing `Idle` fallback could start first and
+  swallow the state motion.
+- Bind the drawable vertex and opacity accessors to their owners when covering live mesh
+  deformation. They are prototype methods on the bundled runtime, so the unbound
+  references threw on first use and left the model canvas hidden.
+- Settle a turn whose native session ID the host rekeys mid-turn. Turn-scoped events are
+  now matched by their stable `turnId` first, and the new session ID is adopted into both
+  the tracked turn and the active-session reference, so the pet no longer stays stuck at
+  `thinking` for the rest of the turn.
+- Mirror a terminal turn that started before the current runtime existed, which happens on
+  plugin hot reload, re-enable, or a replaced overlay runtime. Completion and failure were
+  silently discarded, leaving the pet at `idle`; turns already settled by this runtime stay
+  ignored so late events cannot revive them.
 
 ## [1.0.5] - 2026-10-01
 

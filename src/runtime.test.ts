@@ -90,15 +90,15 @@ describe("PetRuntime", () => {
     runtime.dispose();
   });
 
-  for (const phase of ["startup", "closed", "cancelled", "failed", "exited", "expired"] as const) {
-    it.each(["runtime", "afterTurn"] as const)(`ignores late %s callbacks when the active turn is absent (${phase})`, async (source) => {
+  for (const phase of ["closed", "cancelled", "failed", "exited", "expired"] as const) {
+    it.each(["runtime", "afterTurn"] as const)(`ignores late %s callbacks for an already settled turn (${phase})`, async (source) => {
       vi.useFakeTimers();
       const harness = makeContext();
       const runtime = new PetRuntime(harness.ctx);
       try {
         await runtime.ready;
         const hooks = harness.getTurnHooks()!;
-        if (phase !== "startup") hooks.onTurnStarted?.(turnEvent());
+        hooks.onTurnStarted?.(turnEvent());
         if (phase === "closed") harness.getSessionHooks()?.onClosed?.(turnEvent());
         if (phase === "cancelled") hooks.onRuntimeEvent?.(runtimeEvent("turn-cancelled"));
         if (phase === "failed") hooks.onRuntimeEvent?.(runtimeEvent("turn-failed"));
@@ -121,6 +121,24 @@ describe("PetRuntime", () => {
       }
     });
   }
+
+  it("ignores a runtime event for a turn it never saw start", async () => {
+    vi.useFakeTimers();
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      // 回合内进度事件不是终态，没有跟踪记录时无从判断该表现什么 → 保持 idle。
+      harness.getTurnHooks()?.onRuntimeEvent?.(runtimeEvent("permission-requested"));
+      expect(runtime.snapshot().state).toBe("idle");
+      expect(vi.getTimerCount()).toBe(0);
+
+      harness.getTurnHooks()?.onTurnStarted?.({ ...turnEvent(), turnId: "next-turn" });
+      expect(runtime.snapshot().state).toBe("thinking");
+    } finally {
+      runtime.dispose();
+    }
+  });
 
   it("keeps the first turn active when the host announces its native session ID after turn start", async () => {
     const harness = makeContext();
@@ -263,6 +281,79 @@ describe("PetRuntime", () => {
       harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
       harness.getSessionHooks()?.onClosed?.({ ...turnEvent(), ...difference });
       expect(runtime.snapshot().state).toBe("thinking");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("settles a turn whose native session ID is rekeyed mid-turn", async () => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      harness.emit("session://activated", { engine: "codex", sessionId: "session-1" });
+      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      expect(runtime.snapshot().state).toBe("thinking");
+
+      // 宿主在回合中途把 native session id 换掉（engine-events.ts 无条件改写 lifecycle.sessionId），
+      // 没有任何 session://activated 对账；完成事件带的是新 id。
+      harness.getTurnHooks()?.onRuntimeEvent?.({
+        ...runtimeEvent("permission-requested"), sessionId: "session-rekeyed",
+      });
+      expect(runtime.snapshot().state).toBe("waiting");
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), sessionId: "session-rekeyed", status: "completed" });
+      expect(runtime.snapshot().state).toBe("done");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("adopts a terminal turn that started before this runtime existed", async () => {
+    vi.useFakeTimers();
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      // 插件热重载/重新启用:回合在本 runtime 之前就开始了,只收到完成事件。
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      expect(runtime.snapshot().state).toBe("done");
+      vi.advanceTimersByTime(3500);
+      expect(runtime.snapshot().state).toBe("idle");
+
+      // 失败同样要表现出来。
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), turnId: "turn-2", status: "failed" });
+      expect(runtime.snapshot().state).toBe("error");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("ignores an orphan cancellation instead of inventing feedback", async () => {
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "cancelled" });
+      expect(runtime.snapshot().state).toBe("idle");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("settles the next turn that arrives while the previous one is still held at done", async () => {
+    vi.useFakeTimers();
+    const harness = makeContext();
+    const runtime = new PetRuntime(harness.ctx);
+    try {
+      await runtime.ready;
+      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      expect(runtime.snapshot().state).toBe("done");
+
+      // done 仍在保持期内（计时器未到期），同一会话的下一个回合随即到达：
+      // 已结算的旧记录不得接住新的 turnId，否则新回合会被当成迟到事件丢弃。
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), turnId: "turn-2", status: "failed" });
+      expect(runtime.snapshot().state).toBe("error");
     } finally {
       runtime.dispose();
     }
