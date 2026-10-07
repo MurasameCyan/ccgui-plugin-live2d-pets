@@ -48,9 +48,12 @@ function makeModel() {
       pixelsPerUnit: 100,
       localTransform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 },
       coreModel: {
-        getDrawableCount: () => 1,
-        getDrawableVertices: () => vertices,
-        getDrawableOpacity: () => 1,
+        drawables: { vertices, opacities: new Float32Array([1]) },
+        getDrawableCount() { return 1; },
+        // The real adapters expose these as prototype methods that read `this`;
+        // keep the fixture `this`-dependent so unbound captures fail here too.
+        getDrawableVertices() { return this.drawables.vertices; },
+        getDrawableOpacity() { return this.drawables.opacities[0]!; },
       },
       hitAreas: { Head: {} },
       focusController: { focus: vi.fn() },
@@ -433,6 +436,25 @@ describe("pet overlay display lifecycle", () => {
     expect(model.motion).toHaveBeenCalledWith("tap_body", undefined, 3);
   });
 
+  it("tries the default state candidates in order instead of shuffling the Idle fallback", async () => {
+    // The default chain ends in Idle as a last resort. Shuffling it lets Idle
+    // start first and silently swallow the state motion.
+    const model = makeModel();
+    model.internalModel.motionManager.definitions = { Idle: [{}], Thinking: [{}], Working: [{}] };
+    const harness = await mountPet({ model });
+    model.motion.mockClear();
+    model.motion.mockImplementation(async (...args: unknown[]) => args[0] !== "Working");
+    // A shuffled default chain would deterministically reverse into Idle first.
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    await act(async () => {
+      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      await Promise.resolve();
+    });
+
+    const started = (model.motion.mock.calls as unknown as unknown[][]).map((call) => call[0]);
+    expect(started).toEqual(["Thinking"]);
+  });
+
   it("honors display updates and pause while a model request is pending", async () => {
     const model = deferred<void>();
     const { runtime, anchor, isTicking } = await mountPet({ modelReady: model.promise });
@@ -704,7 +726,8 @@ describe("pet overlay display lifecycle", () => {
     Object.assign(model.internalModel, {
       pixelsPerUnit: undefined,
       drawDataCount: 1,
-      getDrawableVertices: () => drawState._$VS ? vertices : new Float32Array(),
+      drawState,
+      getDrawableVertices() { return this.drawState._$VS ? vertices : new Float32Array(); },
     });
     const harness = await mountPet({ model, display: { right: 1000, bottom: 1000 } });
     await settle(harness);

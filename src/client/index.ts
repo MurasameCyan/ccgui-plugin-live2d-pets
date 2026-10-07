@@ -327,8 +327,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let showSpatialZones = false
   /** 当前模型生效的空间回退阈值（runtime 快照下发；默认 DEFAULT_SPATIAL_TAP）。 */
   let spatialTap: SpatialTapConfig = { ...DEFAULT_SPATIAL_TAP }
-  /** 当前模型生效的状态/互动动画映射（runtime 快照下发；默认 DEFAULT_MOTION_MAP）。 */
-  let motionMap: MotionMap = { ...DEFAULT_MOTION_MAP }
+  /** 当前模型的动画映射覆盖（runtime 快照下发）；为空表示使用默认候选链。 */
+  let motionMap: MotionMap = {}
   let zoneRaf = 0
   let app: {
     destroy(remove?: boolean): void
@@ -863,9 +863,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     // Both adapters expose drawable vertices in model-canvas coordinates through
     // InternalModel.getDrawableVertices(). The test fallback below models the
     // older normalized Core API used by existing unit fixtures.
-    const directVertices = internal.getDrawableVertices
+    // These are prototype methods on the real adapters: bind them, because an
+    // unbound reference throws on the first `this` access inside the SDK.
+    const directVertices = internal.getDrawableVertices?.bind(internal)
     const directCount = internal.drawDataCount ?? core.getDrawableCount?.()
-    const directOpacity = core.getDrawableOpacity
+    const directOpacity = core.getDrawableOpacity?.bind(core)
     let x0 = Infinity
     let x1 = -Infinity
     let y0 = Infinity
@@ -1645,8 +1647,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     setSpatialZonesVisible(cfg.developerMode && !!cfg.showTapZones)
     // 空间回退阈值：随当前模型解析结果热更新（自定义可覆盖；色块与分档共用）
     if (cfg.spatialTap) spatialTap = { ...cfg.spatialTap }
-    // 动画映射：随当前模型解析结果热更新（自定义/内置可覆盖；缺省默认）
-    if (cfg.motionMap) motionMap = { ...DEFAULT_MOTION_MAP, ...cfg.motionMap }
+    // 动画映射覆盖：随当前模型解析结果热更新。默认候选链由 motionNamesFor 按序兜底，
+    // 不能在此合并——否则有序兜底链会被当成用户配置随机打乱，末位的 Idle 会吞掉状态动作。
+    if (cfg.motionMap) motionMap = { ...cfg.motionMap }
     // 帧率：立刻改 ticker.maxFPS（0 = 不限制）
     applyMaxFps(cfg.maxFps)
     // 尺寸：合并后重设画布 + 模型适配（避免连发 SSE 同步卡死主线程）

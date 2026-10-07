@@ -1,5 +1,4 @@
 import {
-  DEFAULT_MOTION_MAP,
   DEFAULT_SPATIAL_TAP,
   isRemoteModelUrl,
   mergeSpatialTap,
@@ -26,7 +25,9 @@ export function resolveSpatialTap(model: string, customModels: readonly CustomMo
 export function resolveMotionMap(model: string, customModels: readonly CustomModelEntry[]): MotionMap {
   const custom = customModels.find((entry) => entry.id === model);
   const preset = BUILTIN_PRESETS.find((entry) => entry.id === model);
-  return { ...DEFAULT_MOTION_MAP, ...(custom?.animationMap ?? preset?.animationMap ?? {}) };
+  // Overrides only. The client must be able to tell a configured slot from the
+  // default ordered fallback chain, which it tries in order and never shuffles.
+  return { ...(custom?.animationMap ?? preset?.animationMap ?? {}) };
 }
 export function resolveModelLocation(model: string, customModels: readonly CustomModelEntry[]): string | null {
   if (isRemoteModelUrl(model)) return model;

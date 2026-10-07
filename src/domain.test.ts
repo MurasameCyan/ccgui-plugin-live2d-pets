@@ -14,13 +14,14 @@ describe("Live2D model and persona data", () => {
     expect(resolveModelLocation("missing", [])).toBeNull();
   });
 
-  it("clamps spatial tap overrides and preserves default motion fallbacks", () => {
+  it("clamps spatial tap overrides and reports only real motion overrides", () => {
     expect(mergeSpatialTap({ headMaxNy: 2, bodyMinNx: -1 })).toMatchObject({
       headMaxNy: 1,
       bodyMinNx: 0,
       bodyMaxNx: DEFAULT_SPATIAL_TAP.bodyMaxNx,
     });
-    expect(resolveMotionMap("hiyori", []).idle).toEqual(["Idle"]);
+    expect(resolveMotionMap("hiyori", [])).toEqual({});
+    expect(resolveMotionMap("pet", [{ id: "pet", name: "Pet", modelUrl: "https://example.test/model3.json", animationMap: { body: ["Tap"] } }])).toEqual({ body: ["Tap"] });
   });
 
   it("parses JSONC custom personas and merges only overridden copy pools", () => {
