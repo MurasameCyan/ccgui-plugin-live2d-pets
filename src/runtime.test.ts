@@ -47,7 +47,7 @@ describe("PetRuntime", () => {
     runtime.dispose();
   });
 
-  it("ignores stale runtime events and persists a normalized display position", async () => {
+  it("ignores stale runtime events", async () => {
     const harness = makeContext();
     const runtime = new PetRuntime(harness.ctx);
     await runtime.waitUntilReady();
@@ -63,10 +63,27 @@ describe("PetRuntime", () => {
     });
     expect(runtime.snapshot().state).toBe("thinking");
 
-    await runtime.setDisplay({ right: -20, bottom: 5001, size: 999 });
-    expect(runtime.snapshot().display).toEqual({ right: 0, bottom: 4000, size: 400 });
-    expect(harness.ctx.storage).toBeDefined();
     runtime.dispose();
+  });
+
+  it("preserves signed docked offsets across updates and reload", async () => {
+    const { ctx } = makeContext();
+    const runtime = new PetRuntime(ctx);
+    await runtime.ready;
+    try {
+      await runtime.setDisplay({ right: -37, bottom: -54 });
+      await runtime.setDisplay({ debugPosition: { left: 280, top: 160 } });
+      expect(runtime.snapshot().display).toMatchObject({ right: -37, bottom: -54 });
+    } finally {
+      runtime.dispose();
+    }
+    const restored = new PetRuntime(ctx);
+    await restored.ready;
+    try {
+      expect(restored.snapshot().display).toMatchObject({ right: -37, bottom: -54 });
+    } finally {
+      restored.dispose();
+    }
   });
 
   it("keeps the debug panel position independent across pet moves, reset and reload", async () => {

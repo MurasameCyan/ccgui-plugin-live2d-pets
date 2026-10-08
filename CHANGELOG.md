@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Dock against the measured opaque-pixel rectangle rather than the authored canvas or animation-growth padding, while retaining the complete animation buffer.
+- Preserve signed viewport offsets through saves, unrelated updates and reloads; restore the saved anchor after model warmup and viewport resizing instead of keeping an early temporary clamp.
 - Preserve cold-loaded interaction and preview requests when a stopped idle emits a late finish. Playback ownership now begins at `motionStart`, and late start promises cannot revive completed actions.
 - Avoid issuing a duplicate default idle request after the runtime has already reserved its automatic idle, preventing a spurious failed-request readout after a successful interaction.
 - Use only `Done` as the default completion candidate instead of trying `Jumping` first. Explicit model mappings remain unchanged.

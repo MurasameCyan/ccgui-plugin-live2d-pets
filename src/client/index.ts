@@ -387,6 +387,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   // 主体宽度与初始锚点在预热后冻结；变形超出原始画布时只扩展渲染覆盖。
   let artRef: { w: number; h: number; cx: number; cy: number } | null = null
   let artUnion: { x0: number; x1: number; y0: number; y1: number } | null = null
+  // 停靠只使用实测像素，不包含动画画布和防裁切的增容留白。
+  let visibleArtBounds: { x0: number; x1: number; y0: number; y1: number } | null = null
   let animationCover: { x0: number; x1: number; y0: number; y1: number } | null = null
   // 渲染画布相对初始锚点的偏移：扩展留白不移动模型的屏幕原点。
   let canvasRightOffset = 0
@@ -910,11 +912,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     model.scale.set(scale)
     const originX = canvasSize.width - ART_PADDING / 2 - cover.x1 * scale
     const originY = canvasSize.height - ART_PADDING / 2 + cover.y0 * scale
+    const visible = visibleArtBounds ?? cover
     canvasVisibleInsets = {
-      left: Math.max(0, originX + cover.x0 * scale),
-      right: Math.max(0, canvasSize.width - (originX + cover.x1 * scale)),
-      top: Math.max(0, originY - cover.y1 * scale),
-      bottom: Math.max(0, canvasSize.height - (originY - cover.y0 * scale)),
+      left: Math.max(0, originX + visible.x0 * scale),
+      right: Math.max(0, canvasSize.width - (originX + visible.x1 * scale)),
+      top: Math.max(0, originY - visible.y1 * scale),
+      bottom: Math.max(0, canvasSize.height - (originY - visible.y0 * scale)),
     }
     model.position.set(originX, originY)
     modelOrigin = { x: originX, y: originY }
@@ -1038,6 +1041,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (maxY >= h - 2) y1 += ART_EDGE_MARGIN_PX
     if (x1 - x0 + 1 < 8 || y1 - y0 + 1 < 8) return false
     // 画布坐标 → 模型单位（相对模型原点）：模型可能在画布内被钉在右下，不能按画布中心换算。
+    visibleArtBounds = {
+      x0: (minX - modelOrigin.x) / scale,
+      x1: (maxX + 1 - modelOrigin.x) / scale,
+      y0: (modelOrigin.y - (maxY + 1)) / scale,
+      y1: (modelOrigin.y - minY) / scale,
+    }
     const sample = {
       x0: (x0 - modelOrigin.x) / scale,
       x1: (x1 + 1 - modelOrigin.x) / scale,
@@ -1186,6 +1195,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     baseModelH = 0
     artRef = null
     artUnion = null
+    visibleArtBounds = null
     animationCover = null
     canvasRightOffset = 0
     canvasBottomOffset = 0
@@ -1339,6 +1349,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
           detachArtMeasure?.()
           artRef = artUnion ? metricsFromRect(artUnion) : null
           animationCover = artCover()
+          // 画布/像素边界就绪后再恢复保存的锚点，避免加载前的临时钳制吞掉负偏移。
+          if (!dragging && view) {
+            pos.right = view.display.right
+            pos.bottom = view.display.bottom
+          }
           applySizeNow(pos.size)
           expandAnimationCover()
           if (canvas) canvas.style.visibility = ''
@@ -1906,6 +1921,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       const onViewportResize = (): void => {
         applyDebugPosition()
         if (dragging) return
+        if (view) {
+          pos.right = view.display.right
+          pos.bottom = view.display.bottom
+        }
         applySizeNow(pos.size)
         applyPosition()
       }

@@ -139,6 +139,8 @@ let mountId = 0;
 const cleanups: Array<() => void> = [];
 
 async function mountPet(options: {
+  /** Restore an existing backend without reseeding its saved config/display. */
+  context?: ReturnType<typeof makeContext>;
   display?: Partial<PetDisplay>;
   config?: Partial<PetConfig>;
   vendor?: "ready" | "pending" | "failed";
@@ -147,12 +149,16 @@ async function mountPet(options: {
   motionMap?: MotionMap;
   /** 绘制区域（画布坐标）：驱动 gl.readPixels 的 alpha 包围盒。 */
   art?: { x0: number; x1: number; y0: number; y1: number };
+  /** Opaque rectangle in model coordinates; follows the real scale and origin. */
+  modelArt?: { x0: number; x1: number; y0: number; y1: number };
 } = {}) {
-  const harness = makeContext();
+  const harness = options.context ?? makeContext();
   const id = ++mountId;
   harness.ctx.assets.bundleUrl = (path) => `https://plugin-assets.test/${id}/${path}`;
-  await harness.ctx.storage.set("display", { right: 180, bottom: 120, ...options.display });
-  await harness.ctx.storage.set("config", { size: 240, ...options.config });
+  if (!options.context) {
+    await harness.ctx.storage.set("display", { right: 180, bottom: 120, ...options.display });
+    await harness.ctx.storage.set("config", { size: 240, ...options.config });
+  }
   if (options.motionMap) {
     harness.documents.set("custom-models.jsonc", { version: "1", content: JSON.stringify({ models: [{
       id: "motion-test", name: "Motion test", modelUrl: "https://motion.test/model.json", animationMap: options.motionMap,
@@ -202,12 +208,24 @@ async function mountPet(options: {
   // 记录的调用顺序用于断言「resize 后同帧重绘」。
   const calls: string[] = [];
   let canvasEl: HTMLCanvasElement | null = null;
-  const glMock = options.art && {
+  const glMock = (options.art || options.modelArt) && {
     RGBA: 6408,
     UNSIGNED_BYTE: 5121,
     readPixels: (rx: number, ry: number, w: number, h: number, _format: number, _type: number, pixels: Uint8Array) => {
       if (!rendered || !canvasEl) return;
-      const art = options.art!;
+      let art = options.art!;
+      if (options.modelArt) {
+        if (!options.model) throw new Error("modelArt requires an explicit model");
+        const model = options.model;
+        const { scale } = projectedModel(model);
+        const [x, y] = model.position.set.mock.calls.at(-1)! as [number, number];
+        art = {
+          x0: Math.ceil(x + options.modelArt.x0 * scale),
+          x1: Math.ceil(x + options.modelArt.x1 * scale) - 1,
+          y0: Math.ceil(y - options.modelArt.y1 * scale),
+          y1: Math.ceil(y - options.modelArt.y0 * scale) - 1,
+        };
+      }
       const canvasHeight = canvasEl.height;
       for (let y = 0; y < h; y += 1) {
         // GL 原点在左下，换算成画布坐标。
@@ -362,24 +380,49 @@ describe("pet overlay display lifecycle", () => {
     expect(await ctx.storage.get("display")).toMatchObject({ right: 24, bottom: 20 });
   });
 
-  it("keeps the pet inside the viewport when dragged, and docks at the edges", async () => {
-    const { anchor } = await mountPet();
-    const canvas = anchor.querySelector("canvas")!;
-    const width = canvas.width;
-    const height = canvas.height;
+  it.each(["right-bottom", "left-top"] as const)("docks visible pixels at %s through release, resize and reload", async (corner) => {
+    vi.stubGlobal("innerWidth", 1200);
+    vi.stubGlobal("innerHeight", 900);
+    const art = { x0: -35, x1: 25, y0: -70, y1: 55 };
+    let model = makeModel();
+    let harness = await mountPet({ model, modelArt: art });
+    await settle(harness);
 
-    // 透明安全边可以越出视口 4px，但模型可见像素必须能贴到四条边。
-    pointer(canvas, "pointerdown", 500, 500);
-    pointer(canvas, "pointermove", -200, -200);
-    expect(anchor.style.right).toBe(`${window.innerWidth - width + 4}px`);
-    expect(anchor.style.bottom).toBe(`${window.innerHeight - height + 4}px`);
+    const expectDocked = () => {
+      const canvas = harness.modelCanvas()!;
+      const origin = screenOrigin(model, harness.anchor, canvas);
+      const { scale } = projectedModel(model);
+      const rightBottom = corner === "right-bottom";
+      const x = origin.x + (rightBottom ? art.x1 : art.x0) * scale;
+      const y = origin.y - (rightBottom ? art.y0 : art.y1) * scale;
+      expect(Math.abs(x - (rightBottom ? window.innerWidth : 0))).toBeLessThanOrEqual(2);
+      expect(Math.abs(y - (rightBottom ? window.innerHeight : 0))).toBeLessThanOrEqual(2);
+      expectCompleteModel(model, canvas);
+      expect(harness.runtime.snapshot().config.size).toBe(240);
+    };
+    const canvas = harness.modelCanvas()!;
+    const end = corner === "right-bottom" ? 5000 : -5000;
+    pointer(canvas, "pointerdown", 100, 100);
+    pointer(canvas, "pointermove", end, end);
+    expectDocked();
+    await act(async () => { pointer(canvas, "pointerup", end, end); });
+    expectDocked();
+    await act(async () => { await harness.runtime.setSettings([{ op: "set", path: ["persona"], value: "genki" }]); });
+    expectDocked();
 
-    // 向右下拖动：可见模型贴住右/下边，画布的 4px 透明边在视口外。
-    pointer(canvas, "pointerdown", 0, 0);
-    pointer(canvas, "pointermove", 1200, 1200);
-    expect(anchor.style.right).toBe("-4px");
-    expect(anchor.style.bottom).toBe("-4px");
-    await act(async () => { pointer(canvas, "pointerup", 1200, 1200); });
+    for (const [width, height] of [[700, 600], [1200, 900]]) {
+      vi.stubGlobal("innerWidth", width);
+      vi.stubGlobal("innerHeight", height);
+      await act(async () => { window.dispatchEvent(new Event("resize")); });
+      expectDocked();
+    }
+
+    const context = harness;
+    await act(async () => { harness.unmount(); });
+    model = makeModel();
+    harness = await mountPet({ context, model, modelArt: art });
+    await settle(harness);
+    expectDocked();
   });
 
   it("keeps the full authored model visible after calibrating a narrow initial pose", async () => {
