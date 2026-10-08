@@ -32,6 +32,24 @@ interface DebugMotionItem {
   label: string
 }
 
+interface MotionRequest {
+  seq: number
+  kind: 'state' | 'interaction' | 'preview'
+  slot: string
+  chain: readonly string[]
+  candidate?: string
+  index?: number
+  phase: 'pending' | 'playing' | 'finished' | 'failed'
+  results: string[]
+}
+
+interface MotionPlayback {
+  group: string
+  index: number
+  phase: 'playing' | 'finished'
+  request: MotionRequest | null
+}
+
 interface ModelLike {
   width: number
   height: number
@@ -59,10 +77,13 @@ interface ModelLike {
     hitAreas?: Record<string, unknown>
     focusController?: { focus(x: number, y: number, instant?: boolean): void }
     motionManager?: {
+      on?(event: "motionStart", listener: (group: string, index: number) => void): unknown
       on?(event: "motionFinish", listener: () => void): unknown
+      off?(event: "motionStart", listener: (group: string, index: number) => void): unknown
       off?(event: "motionFinish", listener: () => void): unknown
       stopAllMotions?(): void
       definitions?: Record<string, unknown>
+      groups?: { idle: string }
     }
   }
 }
@@ -320,15 +341,15 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   /** 按模型 URL 缓存原生动画列表，避免重复请求同一份 model.json/model3.json。 */
   const motionListCache = new Map<string, DebugMotionItem[]>()
   let debugMotionSelect: HTMLSelectElement | null = null
+  let exitDemoButton: HTMLButtonElement | null = null
   /** 调试面板状态文本容器：与演示按钮/动画预览并列，避免被 textContent 覆盖。 */
   let debugTextEl: HTMLDivElement | null = null
+  let debugOutputs: Record<string, HTMLOutputElement> = {}
   /** 最近一次 applyState 收到的快照：renderDebugText 可在状态动作结算时独立重绘。 */
   let lastDebugView: PetStateView | null = null
-  /** 上一次状态动作的实际结果：候选链、命中的组名、每个候选的返回值。
-   *  用于在 debug 面板直接区分「压根没发」「发了但全部返回 false」「命中了哪个组」。 */
-  let lastStateMotion: { slot: string; chain: string[]; played: string | null; results: string[] } | null = null
-  /** 是否正处于 debug 原生动画预览：预览期间抑制 focus，结束后只恢复跟随，不触发状态恢复。 */
-  let previewActive = false
+  /** 请求与实际播放分开：冷加载时可以有 pending 请求和库自动播放的 Idle。 */
+  let lastMotionRequest: MotionRequest | null = null
+  let currentMotion: MotionPlayback | null = null
   let canvas: HTMLCanvasElement | null = null
   /** 画布外包一层，便于绝对定位调试分区叠加层。 */
   let petLayer: HTMLDivElement | null = null
@@ -391,16 +412,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let lastTapAt = 0
   /** 各点击台词池上一次抽中的句子（避开连抽同一句，spec §4）。 */
   const lastTapLine: Partial<Record<'tapHead' | 'tapLeg' | 'tapArm' | 'tapBody', string>> = {}
-  /** 互动动作世代：新互动或新非 idle 状态动作会作废上一次互动的恢复回调。 */
-  let interactionGen = 0
   /** 动作启动世代：任何新动作都会使异步 fallback/旧启动失效，避免被 stopAllMotions 打断后继续启动。 */
   let motionSeq = 0
-  /** 是否正在播放互动动作（motionFinish 后据此恢复当前状态动作）。 */
-  let interactionActive = false
   /** 是否抑制鼠标跟随：非 idle 动作播放期间为 true（spec §4）。 */
   let focusSuppressed = false
   let lastPointerClient: { x: number; y: number } | null = null
-  let detachMotionFinish: (() => void) | null = null
+  let detachMotionEvents: (() => void) | null = null
   let bubbleHideTimer: number | undefined
   let stageTimers: number[] = []
   let stagedState: PetState | null = null
@@ -606,96 +623,91 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     return resolveMotionNames(names, nativeGroups)
   }
 
-  /**
-   * 按候选动作链启动动作，统一处理优先级、重播前 stopAllMotions、布尔返回值 fallback。
-   * - idle 用 IDLE 优先级；状态/互动用 FORCE（NORMAL 不能打断 NORMAL，无法满足状态立即切换）。
-   * - 非 idle 动作启动时抑制 focus，并等 motionFinish 真正播完后再恢复。
-   */
+  /** 每次请求先作废旧播放归属；只有 motionStart 确认后才允许 motionFinish 恢复状态。 */
   async function startMotionWithPriority(
     names: readonly string[],
     priority: MotionPriority,
-    options: { suppressFocus: boolean; isInteraction: boolean; track?: string },
+    options: { suppressFocus: boolean; kind: MotionRequest['kind']; slot: string; index?: number },
   ): Promise<boolean> {
-    if (!model || names.length === 0) return false
-    const seq = ++motionSeq
+    if (!model) return false
     const currentModel = model
-    previewActive = false
+    const request: MotionRequest = {
+      seq: ++motionSeq, kind: options.kind, slot: options.slot, chain: names,
+      index: options.index, phase: 'pending', results: [],
+    }
+    lastMotionRequest = request
+    // stopAllMotions 不清库的 playing 标志，下一帧仍可能发旧 motionFinish。
+    // 必须在 stop 前清归属，不能把这个完成事件记在尚未开始的新请求上。
+    currentMotion = null
+    currentModel.internalModel?.motionManager?.stopAllMotions?.()
     if (options.suppressFocus) {
       focusSuppressed = true
       currentModel.internalModel?.focusController?.focus(0, 0, true)
     } else {
       releaseFocusSuppression()
     }
-    if (options.isInteraction) interactionActive = true
-    // 重播同一动作前必须清 MotionState；否则库会因“同 group+index 已激活”拒绝启动。
-    currentModel.internalModel?.motionManager?.stopAllMotions?.()
-    const results: string[] = []
-    const track = (played: string | null): void => {
-      if (!options.track) return
-      lastStateMotion = { slot: options.track, chain: [...names], played, results: [...results] }
-      renderDebugText()
-    }
     for (const name of names) {
-      if (seq !== motionSeq || !model) return false
+      if (request.seq !== motionSeq || model !== currentModel) return false
+      request.candidate = name
+      request.phase = 'pending'
+      renderDebugText()
       try {
-        const ok = await model.motion(name, undefined, priority)
-        if (seq !== motionSeq || !model) return false
-        results.push(`${name}=${ok}`)
-        if (ok) {
-          track(name)
-          return true
-        }
+        const ok = await currentModel.motion(name, options.index, priority)
+        if (request.seq !== motionSeq || model !== currentModel) return false
+        request.results.push(`${name}=${ok}`)
+        renderDebugText()
+        // Promise 只结算启动结果；短动作可能已完成，不能在这里重新标记 playing。
+        if (ok) return true
       } catch (error) {
-        if (seq !== motionSeq || !model) return false
-        results.push(`${name}=throw(${error instanceof Error ? error.message : String(error)})`)
-        // 单个候选失败/返回 false 时继续尝试下一个
+        if (request.seq !== motionSeq || model !== currentModel) return false
+        request.results.push(`${name}=throw(${error instanceof Error ? error.message : String(error)})`)
       }
     }
-    track(null)
-    // 全部候选都失败：清理本次的互动/焦点标记（若期间已被新动作取代则不动）。
-    if (seq === motionSeq) {
-      if (options.isInteraction) interactionActive = false
-      if (options.suppressFocus) releaseFocusSuppression()
-    }
+    request.phase = 'failed'
+    releaseFocusSuppression()
+    renderDebugText()
     return false
   }
 
   function playState(state: PetState): void {
-    if (!model) return
-    const names = motionNamesFor(state)
-    if (names.length === 0) {
-      // 该状态在当前模型上没有任何可用动作组：记录「压根没发」，而不是静默返回。
-      lastStateMotion = { slot: state, chain: [], played: null, results: [] }
-      renderDebugText()
-      return
-    }
-    // 任何状态动作（含回到 idle）都会取代正在播放的互动/旧状态动作
-    interactionGen += 1
-    interactionActive = false
     const priority = state === 'idle' ? MotionPriority.IDLE : MotionPriority.FORCE
-    void startMotionWithPriority(names, priority, { suppressFocus: state !== 'idle', isInteraction: false, track: state })
+    void startMotionWithPriority(motionNamesFor(state), priority, {
+      suppressFocus: state !== 'idle', kind: 'state', slot: state,
+    })
   }
 
-  /** MotionManager.motionFinish：动作真正播完。互动结束后恢复当前状态动作并解除 focus 抑制。
-   * 注意该事件在库内部 state.complete()/自动回 idle 之前同步触发，恢复动作需延到微任务，
-   * 避免在 MotionManager.update 中间重入修改 MotionState。 */
+  function handleMotionStart(group: string, index: number): void {
+    const pending = lastMotionRequest
+    const request = pending?.phase === 'pending' && pending.candidate === group
+      && (pending.index === undefined || pending.index === index) ? pending : null
+    if (request) request.phase = 'playing'
+    // 无归属的开始事件（如自动 Idle）也必须出现在当前动作读数中。
+    currentMotion = { group, index, phase: 'playing', request }
+    renderDebugText()
+  }
+
+  /** 库在 state.complete()/自动 Idle 前同步发出完成事件，恢复必须延后到微任务。 */
   function handleMotionFinish(): void {
-    const wasPreview = previewActive
-    previewActive = false
-    const wasInteraction = interactionActive
-    const gen = interactionGen
-    const seq = motionSeq
-    interactionActive = false
-    queueMicrotask(() => {
-      // 若期间已有新动作启动（motionSeq 变化），由新动作接管焦点/恢复，这里不再处理
-      if (seq !== motionSeq) return
-      releaseFocusSuppression()
-      // debug 原生预览结束后只恢复 focus，不触发状态动作恢复
-      if (wasPreview) return
-      if (wasInteraction && gen === interactionGen && !interactionActive && lastState) {
-        playState(lastState)
-      }
-    })
+    const finished = currentMotion
+    if (!finished || finished.phase !== 'playing') return
+    finished.phase = 'finished'
+    const request = finished.request
+    if (request && request === lastMotionRequest && request.phase === 'playing') {
+      request.phase = 'finished'
+      queueMicrotask(() => {
+        if (disposed || request.seq !== motionSeq || request !== lastMotionRequest) return
+        releaseFocusSuppression()
+        // 只有确实开始并完成的互动才恢复状态；预览/状态/旧 Idle 不得清新 reservation。
+        if (request.kind === 'interaction' && lastState) {
+          // 库已在本帧预留自动 Idle，不重复 stop/start 抢走它的 reservation。
+          // 自定义待机映射或库不认识的待机组仍由插件恢复。
+          const automaticIdle = lastState === 'idle' && !motionMap.idle?.length
+            && motionNamesFor('idle')[0] === model?.internalModel?.motionManager?.groups?.idle
+          if (!automaticIdle) playState(lastState)
+        }
+      })
+    }
+    renderDebugText()
   }
 
   function applyState(next: PetStateView | null): void {
@@ -736,21 +748,38 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     renderDebugText()
   }
 
-  /** 渲染调试面板读数。状态动作那行是定位「完成没反应」这类问题的关键证据：
-   *  chain 为空 = 该模型没有可用动作组（压根没发）；played=null = 发了但全部被拒；
-   *  否则就是实际命中的组名，results 给出每个候选的返回值。 */
+  function exitDemo(): void {
+    if (demoState === null && lastMotionRequest?.kind !== 'preview') return
+    demoState = null
+    // 即使演示与真实状态相同，也要取消 pending/预览并重建真实状态的阶段计时。
+    lastState = null
+    applyState(view)
+  }
+
+  /** 真实状态、演示覆盖、库的实际播放和请求阶段各自独立，不把历史候选当成当前动作。 */
   function renderDebugText(): void {
     if (!debugTextEl) return
     const next = lastDebugView
-    const state = demoState ?? next?.state ?? 'idle'
-    const m = lastStateMotion
-    const motionLine = m
-      ? `motion[${m.slot}]: ${m.played ?? (m.chain.length === 0 ? 'none(no groups)' : 'none(all rejected)')}`
-        + `  chain: ${m.chain.join('>') || '-'}`
-        + (m.results.length > 0 ? `\n  tried: ${m.results.join(' ')}` : '')
-      : 'motion: (未触发)'
+    const request = lastMotionRequest
+    if (exitDemoButton) {
+      exitDemoButton.disabled = demoState === null && request?.kind !== 'preview'
+      exitDemoButton.style.opacity = exitDemoButton.disabled ? '.5' : '1'
+    }
+    const values = {
+      '真实状态': next?.state ?? 'idle',
+      '演示状态': demoState ?? '未启用',
+      '当前动作': currentMotion ? `${currentMotion.group}[${currentMotion.index}]` : '无',
+      '播放阶段': currentMotion?.phase ?? '未播放',
+      '请求阶段': request?.phase ?? '未触发',
+    }
+    for (const [label, value] of Object.entries(values)) debugOutputs[label]!.value = value
+    const motionLine = request
+      ? `request[${request.slot}/${request.kind}]: ${request.candidate ?? '-'}\n`
+        + `chain: ${request.chain.join('>') || '无候选'}`
+        + (request.results.length > 0 ? `\ntried: ${request.results.join(' ')}` : '')
+      : 'request: 未触发'
     debugTextEl.textContent =
-      `agent: ${next?.agent ?? '-'}  pet: ${state}  v${next?.version ?? '-'}\n` +
+      `agent: ${next?.agent ?? '-'}  v${next?.version ?? '-'}\n` +
       `persona: ${activePersonaId}  hitAreas: ${hitAreas.join(',') || '-'}\n` +
       `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
       `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}\n` +
@@ -1130,13 +1159,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     }
     // 作废旧模型的所有动作启动/互动恢复；焦点抑制复位
     motionSeq += 1
-    interactionGen += 1
-    interactionActive = false
-    previewActive = false
+    lastMotionRequest = null
+    currentMotion = null
     focusSuppressed = false
     lastPointerClient = null
-    detachMotionFinish?.()
-    detachMotionFinish = null
+    detachMotionEvents?.()
+    detachMotionEvents = null
     // 跨帧绘制区域测量绑在旧 ticker 上：必须在销毁 app 前摘掉，否则重试回调残留。
     detachArtMeasure?.()
     detachBubblePosition?.()
@@ -1173,6 +1201,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     petLayer = null
     canvasVisibleInsets = { left: 0, right: 0, top: 0, bottom: 0 }
     removeFallback()
+    renderDebugText()
   }
 
   /** 加载/重载模型层：销毁旧层 → 新建画布与 PIXI app → 绑定指针事件。 */
@@ -1274,9 +1303,13 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       // 动作真正播完信号：motion() 的 Promise 在开始时即 resolve，不能作为恢复/解除 focus 的时机
       const motionManager = loaded.internalModel?.motionManager
       if (motionManager?.on) {
+        detachMotionEvents?.()
+        motionManager.on('motionStart', handleMotionStart)
         motionManager.on('motionFinish', handleMotionFinish)
-        detachMotionFinish?.()
-        detachMotionFinish = () => motionManager.off?.('motionFinish', handleMotionFinish)
+        detachMotionEvents = () => {
+          motionManager.off?.('motionStart', handleMotionStart)
+          motionManager.off?.('motionFinish', handleMotionFinish)
+        }
       }
       refreshDebugMotionGroups()
       fitModel()
@@ -1574,13 +1607,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     const group = value.slice(0, sep)
     const index = Number(value.slice(sep + 1))
     if (!Number.isInteger(index)) return
-    const currentModel = model
-    ++motionSeq // 作废旧预览/动作的异步回调，避免旧 motionFinish 释放新预览的焦点
-    previewActive = true
-    focusSuppressed = true
-    currentModel.internalModel?.focusController?.focus(0, 0, true)
-    currentModel.internalModel?.motionManager?.stopAllMotions?.()
-    void currentModel.motion(group, index, MotionPriority.FORCE)
+    void startMotionWithPriority([group], MotionPriority.FORCE, {
+      suppressFocus: true, kind: 'preview', slot: 'preview', index,
+    })
   }
 
   /** 调试面板使用视口坐标；模型的位置和画布扩容不改变它。 */
@@ -1603,7 +1632,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     debugEl?.remove()
     debugEl = null
     debugMotionSelect = null
+    exitDemoButton = null
     debugTextEl = null
+    debugOutputs = {}
   }
 
   /** 调试面板动态开关（spec §2）。 */
@@ -1674,6 +1705,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         demoRow.appendChild(btn)
       }
       debugEl.appendChild(demoRow)
+      exitDemoButton = document.createElement('button')
+      exitDemoButton.textContent = '退出演示'
+      exitDemoButton.title = '取消演示和动画预览，立即恢复真实会话状态'
+      exitDemoButton.style.cssText = 'width:100%;margin-top:6px;padding:4px 0;border-radius:6px;border:1px solid rgba(120,170,255,.35);background:rgba(120,170,255,.16);color:#dbe2ef;font-size:11px;font-family:inherit;cursor:pointer'
+      exitDemoButton.onclick = exitDemo
+      debugEl.appendChild(exitDemoButton)
 
       // 动画预览：原生动画下拉 + 播放按钮
       const motionLabel = sectionLabel('动画预览')
@@ -1694,10 +1731,19 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       debugMotionSelect = motionSelect
       debugEl.appendChild(motionRow)
 
-      // 状态信息：与上方区域分隔
+      // 实时读数使用有标签的 output；请求诊断保留独立文本，不覆盖状态字段。
+      const readout = document.createElement('div')
+      readout.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.18);color:#9aa5b8;font-size:11px;white-space:pre-wrap;word-break:break-all'
+      for (const label of ['真实状态', '演示状态', '当前动作', '播放阶段', '请求阶段']) {
+        const output = document.createElement('output')
+        output.setAttribute('aria-label', label)
+        debugOutputs[label] = output
+        readout.append(`${label}: `, output, '\n')
+      }
       debugTextEl = document.createElement('div')
-      debugTextEl.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.18);color:#9aa5b8;font-size:11px;white-space:pre-wrap;word-break:break-all'
-      debugEl.appendChild(debugTextEl)
+      debugTextEl.style.marginTop = '6px'
+      readout.appendChild(debugTextEl)
+      debugEl.appendChild(readout)
       refreshDebugMotionGroups()
       box.appendChild(debugEl)
       applyDebugPosition()
@@ -1707,8 +1753,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       }
       applyState(view)
     } else if (!show && debugEl) {
-      previewActive = false
-      focusSuppressed = false
+      exitDemo()
       removeDebugPanel()
     }
   }
@@ -1827,26 +1872,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         lastTapLine[poolKey] = line
         showBubble(line)
       }
-      void playInteractionMotion(motionNamesFor(part))
+      void startMotionWithPriority(motionNamesFor(part), MotionPriority.FORCE, {
+        suppressFocus: true, kind: 'interaction', slot: part,
+      })
     } catch {
       // 命中检测异常：忽略本次点击
     }
   }
 
-  /**
-   * 播放互动动作（摸头/点身体）：FORCE 可打断状态动画与上一次互动；动作真正播完
-   * （motionFinish）后恢复当前状态动画（spec §4）。motion() 的 Promise 只代表开始，
-   * 因此不再用 Promise 完成时间或 3s 兜底来恢复。
-   */
-  async function playInteractionMotion(names: readonly string[]): Promise<void> {
-    if (!model || names.length === 0) return
-    ++interactionGen
-    await startMotionWithPriority(
-      names,
-      MotionPriority.FORCE,
-      { suppressFocus: true, isInteraction: true },
-    )
-  }
 
   // ---- 主流程 ----
   void (async () => {

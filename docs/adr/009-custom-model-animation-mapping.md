@@ -16,13 +16,13 @@ Accepted
 
 ## Decision
 
-1. **数据模型**：新增 `MotionMap = Partial<Record<AnimationSlot, string[]>>`，槽位为 5 个宠物状态 + 4 个互动部位；`DEFAULT_MOTION_MAP` 保持旧版内置候选链。
+1. **数据模型**：使用 `MotionMap = Partial<Record<AnimationSlot, string[]>>`，槽位为 5 个宠物状态 + 4 个互动部位；`DEFAULT_MOTION_MAP` 统一默认候选链，`done` 只含 `Done`，跳跃不作为默认完成动作。
 2. **配置范围**：只有**自定义模型**在设置面板可编辑「动画映射」；内置 preset 由开发者在 `presets.jsonc` 预置 `animationMap`，用户不单独修改。
 3. **解析动作组**：添加/编辑自定义模型时，打开「动画映射」即实时 `fetch` 该模型 `.model3.json`，从 `FileReferences.Motions`（或顶层 `Motions`）取动作组名列表。
 4. **UI**：每个槽位一个多选下拉，选中项以 tag 展示；多选**不做排序**，触发时随机选一个播放；未配置槽位沿用 `DEFAULT_MOTION_MAP` 并按声明顺序兜底。
 5. **解析失败**：仍允许保存自定义模型，映射区提示“无法解析动画列表，可稍后重试”，并提供重试。
 6. **下发**：`PetService.snapshot()` 通过 `resolveMotionMap()` 计算当前模型生效映射，随 `config.motionMap` 经 SSE 下发 client。
-7. **debug 预览**：调试面板直接解析当前模型 `.model3.json` 的 `Motions`，列出**模型原生全部具体动画**（按动作组分组的文件列表）；选择后直接 `model.motion(group, index, FORCE)` 播放，不掺入插件状态机/焦点/恢复逻辑。
+7. **debug 预览**：调试面板列出模型原生全部具体动画（按动作组分组的文件列表），直接指定 group/index，以 FORCE 播放，不使用状态映射候选链。预览与互动共用 pending/start/finish 归属和焦点抑制，正常结束只恢复跟随；「退出演示」则立即恢复真实状态。
 
 ## Alternatives Considered
 

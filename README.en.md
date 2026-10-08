@@ -12,7 +12,10 @@ A Live2D companion plugin for CC GUI. It mirrors AI session state and provides p
 - Includes six personas and a private JSONC persona file with base inheritance.
 - Includes five curated Live2D sample model URLs and user-defined remote or explicitly granted local models from the supported `.model.json` (Cubism 2.1) and `.model3.json` (Cubism 3–5.3) formats.
 - Supports per-state and per-interaction motion-group mappings. Default candidates are tried in order; missing non-idle state motions no longer fall back to `Idle`.
-- Provides repeatable state demos, native motion preview, and tap-zone diagnostics behind developer options. The debug panel shows the candidate chain, individual results, and the group that actually started.
+  The default completion candidate is only `Done`, never `Jumping`; jumping can be explicitly mapped to an interaction slot.
+- Provides repeatable state demos, native motion preview, and tap-zone diagnostics behind developer options. **Exit demo** immediately resumes the real session state; disabling diagnostics also exits the demo.
+  The debug panel separates real state, demo state, current native motion, playback phase, and request phase. Candidate results remain available, while finish and automatic idle events update the live readout.
+  Interaction and preview loading share start/finish ownership, so a stopped idle's late finish cannot cancel the first cold-loaded action.
   Drag its title bar to move the panel independently; the saved position is unaffected by pet movement or model size changes.
 - Falls back to a static paw when WebGL or model loading fails.
 

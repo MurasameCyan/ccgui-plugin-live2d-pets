@@ -3,6 +3,9 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MotionManager, MotionPriority } from "pixi-live2d-display";
+import type { MotionMap } from "../models";
+import { createMotionTestRuntime } from "./motion-test-runtime";
 import { PetRuntime, type PetConfig } from "../runtime";
 import { clearReactRuntime, setReactRuntime } from "../react-runtime";
 import type { PetDisplay } from "../persist";
@@ -17,11 +20,13 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function makeModel() {
+function makeModel(manager?: MotionManager) {
   let updating = false;
   let subscriptions = 0;
   let elapsedTime = 0;
   const vertices = new Float32Array([-0.5, -1, 0.5, -1, 0.5, 1, -0.5, 1]);
+  const motionManager: Pick<MotionManager, "on" | "off" | "stopAllMotions"> & { definitions: Record<string, unknown> } =
+    manager ?? { on: vi.fn(), off: vi.fn(), stopAllMotions: vi.fn(), definitions: {} };
   return {
     width: 100,
     height: 200,
@@ -37,8 +42,12 @@ function makeModel() {
     anchor: { set: vi.fn() },
     scale: { set: vi.fn() },
     position: { set: vi.fn() },
-    motion: vi.fn(async () => true),
-    destroy: vi.fn(() => { updating = false; subscriptions = 0; }),
+    motion: vi.fn(async (...args: unknown[]) => {
+      if (!manager) return true;
+      const [group, index, priority] = args as [string, number | undefined, MotionPriority | undefined];
+      return index === undefined ? manager.startRandomMotion(group, priority) : manager.startMotion(group, index, priority);
+    }),
+    destroy: vi.fn(() => { updating = false; subscriptions = 0; manager?.destroy(); }),
     focus: vi.fn(),
     hitTest: () => ["Head"],
     getBounds: undefined as (() => { x: number; y: number; width: number; height: number }) | undefined,
@@ -57,7 +66,7 @@ function makeModel() {
       },
       hitAreas: { Head: {} },
       focusController: { focus: vi.fn() },
-      motionManager: { on: vi.fn(), off: vi.fn(), stopAllMotions: vi.fn(), definitions: {} },
+      motionManager,
     },
   };
 }
@@ -135,6 +144,7 @@ async function mountPet(options: {
   vendor?: "ready" | "pending" | "failed";
   model?: ReturnType<typeof makeModel>;
   modelReady?: Promise<void>;
+  motionMap?: MotionMap;
   /** 绘制区域（画布坐标）：驱动 gl.readPixels 的 alpha 包围盒。 */
   art?: { x0: number; x1: number; y0: number; y1: number };
 } = {}) {
@@ -143,6 +153,12 @@ async function mountPet(options: {
   harness.ctx.assets.bundleUrl = (path) => `https://plugin-assets.test/${id}/${path}`;
   await harness.ctx.storage.set("display", { right: 180, bottom: 120, ...options.display });
   await harness.ctx.storage.set("config", { size: 240, ...options.config });
+  if (options.motionMap) {
+    harness.documents.set("custom-models.jsonc", { version: "1", content: JSON.stringify({ models: [{
+      id: "motion-test", name: "Motion test", modelUrl: "https://motion.test/model.json", animationMap: options.motionMap,
+    }] }) });
+    await harness.ctx.storage.set("config", { size: 240, ...options.config, model: "motion-test" });
+  }
   const runtime = new PetRuntime(harness.ctx);
   await runtime.ready;
 
@@ -295,6 +311,29 @@ async function settle(harness: { frame: () => void }, frames = 24): Promise<void
   await act(async () => { for (let index = 0; index < frames; index += 1) harness.frame(); });
 }
 
+function debugValue(anchor: HTMLElement, label: string): string | undefined {
+  return anchor.querySelector<HTMLOutputElement>(`output[aria-label="${label}"]`)?.value;
+}
+
+async function mountMotionPet(groups: readonly string[], motionMap?: MotionMap) {
+  const manager = await createMotionTestRuntime(groups);
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ motions: manager.definitions }) })));
+  const model = makeModel(manager);
+  const harness = await mountPet({ model, motionMap, config: { developerMode: true, debug: true } });
+  const click = async (label: string) => {
+    const button = Array.from(harness.anchor.querySelectorAll("button")).find((item) => item.textContent === label);
+    expect(button, `missing control: ${label}`).toBeDefined();
+    await act(async () => { button!.click(); });
+  };
+  const tap = async () => {
+    await act(async () => {
+      pointer(harness.modelCanvas()!, "pointerdown", 100, 100);
+      pointer(harness.modelCanvas()!, "pointerup", 100, 100);
+    });
+  };
+  return { ...harness, model, manager, click, tap, value: (label: string) => debugValue(harness.anchor, label) };
+}
+
 describe("pet overlay display lifecycle", () => {
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -436,87 +475,150 @@ describe("pet overlay display lifecycle", () => {
     expect(model.motion).toHaveBeenCalledWith("tap_body", undefined, 3);
   });
 
-  it("tries the default state candidates in declaration order", async () => {
-    // Ordered, never shuffled: a shuffled chain lets a later candidate start
-    // first and swallow the preferred state motion.
-    const model = makeModel();
-    model.internalModel.motionManager.definitions = { Idle: [{}], Thinking: [{}], Working: [{}] };
-    const harness = await mountPet({ model });
-    model.motion.mockClear();
-    model.motion.mockImplementation(async (...args: unknown[]) => args[0] !== "Working");
-    // A shuffled default chain would deterministically reverse the preference.
-    vi.spyOn(Math, "random").mockReturnValue(0);
-    await act(async () => {
-      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
-      await Promise.resolve();
-    });
 
-    const started = (model.motion.mock.calls as unknown as unknown[][]).map((call) => call[0]);
-    expect(started).toEqual(["Thinking"]);
+  it("preserves a cold interaction reservation across the stopped idle's finish event", async () => {
+    const h = await mountMotionPet(["Idle", "TapHead"]);
+    const cold = h.manager.hold("TapHead");
+    await h.tap();
+    await act(async () => { h.manager.frame(); });
+    expect(h.manager.state.reservedGroup).toBe("TapHead");
+    expect(h.value("请求阶段")).toBe("pending");
+    expect(h.value("当前动作")).toBe("Idle[0]");
+    await act(async () => { cold.resolve(); });
+    expect(h.manager.state.currentGroup).toBe("TapHead");
+    expect(h.value("当前动作")).toBe("TapHead[0]");
+    expect(h.value("播放阶段")).toBe("playing");
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Idle");
+    expect(h.value("当前动作")).toBe("Idle[0]");
+    expect(h.value("请求阶段")).toBe("finished");
   });
 
-  it("plays nothing when a state's motion groups are all missing, instead of degrading to idle", async () => {
-    // A model without either completion group must not silently play Idle.
-    const model = makeModel();
-    model.internalModel.motionManager.definitions = { Idle: [{}] };
-    const harness = await mountPet({ model });
-    // A real model rejects a group it does not have; the default mock accepts
-    // everything, which would stop the chain at its first candidate.
-    const groups = Object.keys(model.internalModel.motionManager.definitions);
-    model.motion.mockClear();
-    model.motion.mockImplementation(async (...args: unknown[]) => groups.includes(args[0] as string));
-    await act(async () => {
-      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
-      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
-      await Promise.resolve();
+  it("does not revive a short interaction after its finish beats the start promise", async () => {
+    const h = await mountMotionPet(["Idle", "TapHead"]);
+    h.manager.on("motionStart", (group: string) => {
+      if (group === "TapHead") queueMicrotask(() => h.manager.finish());
     });
-
-    const started = (model.motion.mock.calls as unknown as unknown[][]).map((call) => call[0]);
-    // done exhausted Jumping and Done; it must not fall through to Idle.
-    expect(started).toContain("Jumping");
-    expect(started).not.toContain("Idle");
+    await h.tap();
+    expect(h.manager.state.currentGroup).toBe("Idle");
+    expect(h.value("当前动作")).toBe("Idle[0]");
   });
 
-  it("reports the state motion outcome in the debug readout", async () => {
-    // The readout is the evidence trail for "done did nothing": it must say
-    // which chain ran, what each candidate returned, and what actually played.
-    const model = makeModel();
-    model.internalModel.motionManager.definitions = { Idle: [{}], Thinking: [{}] };
-    const groups = Object.keys(model.internalModel.motionManager.definitions);
-    model.motion.mockImplementation(async (...args: unknown[]) => groups.includes(args[0] as string));
-    const harness = await mountPet({ model, config: { developerMode: true, debug: true } });
-
+  it("does not let queued interaction recovery replace a newer real state", async () => {
+    const h = await mountMotionPet(["Idle", "TapHead", "Thinking"]);
+    await h.tap();
     await act(async () => {
-      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
-      await Promise.resolve();
+      h.manager.finish();
+      h.getTurnHooks()?.onTurnStarted?.(turnEvent());
     });
-    const text = () => harness.anchor.textContent ?? "";
-    expect(text()).toContain("motion[thinking]: Thinking");
-    expect(text()).toContain("Thinking=true");
-
-    await act(async () => {
-      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
-      await Promise.resolve();
-    });
-    // done has no Jumping/Done on this model and must not borrow Idle.
-    expect(text()).toContain("motion[done]: none(all rejected)");
-    expect(text()).toContain("Jumping=false");
-    expect(text()).toContain("Done=false");
+    expect(h.manager.state.currentGroup).toBe("Thinking");
+    expect(h.value("真实状态")).toBe("thinking");
+    expect(h.value("当前动作")).toBe("Thinking[0]");
   });
 
-  it("starts exactly one state motion on each of seven consecutive demo clicks", async () => {
-    const model = makeModel();
-    model.internalModel.motionManager.definitions = { Idle: [{}], Jumping: [{}] };
-    const harness = await mountPet({ model, config: { developerMode: true, debug: true } });
-    const done = Array.from(harness.anchor.querySelectorAll("button"))
-      .find((button) => button.textContent === "done")!;
-    model.motion.mockClear();
+  it("keeps real state, demo state and native playback separate through an interaction", async () => {
+    const h = await mountMotionPet(["Idle", "TapHead", "Thinking", "Waiting"]);
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await h.click("waiting");
+    await h.tap();
+    expect(h.value("真实状态")).toBe("thinking");
+    expect(h.value("演示状态")).toBe("waiting");
+    expect(h.value("当前动作")).toBe("TapHead[0]");
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Waiting");
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Idle");
+    expect(h.value("当前动作")).toBe("Idle[0]");
+    expect(h.value("请求阶段")).toBe("finished");
+    expect(h.value("演示状态")).toBe("waiting");
+    await h.click("退出演示");
+    expect(h.runtime.snapshot().state).toBe("thinking");
+    expect(h.manager.state.currentGroup).toBe("Thinking");
+    expect(h.value("演示状态")).toBe("未启用");
+  });
 
-    for (let click = 1; click <= 7; click += 1) {
-      await act(async () => { done.click(); });
-      const groups = (model.motion.mock.calls as unknown[][]).map((call) => call[0]);
-      expect(groups).toEqual(Array(click).fill("Jumping"));
-    }
+  it("cancels a pending demo when exiting without accepting its late load", async () => {
+    const h = await mountMotionPet(["Idle", "Thinking", "Waiting"]);
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    const cold = h.manager.hold("Waiting");
+    await h.click("waiting");
+    await h.click("退出演示");
+    await act(async () => { cold.resolve(); });
+    expect(h.manager.state.currentGroup).toBe("Thinking");
+    expect(h.value("演示状态")).toBe("未启用");
+    expect(h.value("当前动作")).toBe("Thinking[0]");
+  });
+
+  it("restores real state when developer mode is disabled during a demo", async () => {
+    const h = await mountMotionPet(["Idle", "Thinking", "Waiting"]);
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await h.click("waiting");
+    await act(async () => { await h.runtime.setSettings([{ op: "set", path: ["developerMode"], value: false }]); });
+    expect(h.manager.state.currentGroup).toBe("Thinking");
+    expect(h.anchor.querySelector("select")).toBeNull();
+    await act(async () => { await h.runtime.setSettings([{ op: "set", path: ["developerMode"], value: true }]); });
+    expect(h.value("演示状态")).toBe("未启用");
+  });
+
+  it("uses Done rather than Jumping when both groups exist", async () => {
+    const h = await mountMotionPet(["Idle", "Thinking", "Done", "Jumping"]);
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await act(async () => { h.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" }); });
+    expect(h.manager.state.currentGroup).toBe("Done");
+    expect(h.value("当前动作")).toBe("Done[0]");
+  });
+
+  it("does not substitute Jumping when Done is missing", async () => {
+    const h = await mountMotionPet(["Idle", "Thinking", "Jumping"]);
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await act(async () => { h.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" }); });
+    expect(h.manager.state.currentGroup).toBeUndefined();
+    expect(h.value("请求阶段")).toBe("failed");
+    await act(async () => { h.manager.frame(); });
+    expect(h.manager.state.currentGroup).toBe("Idle");
+  });
+
+  it("keeps explicitly mapped jumping on the interaction slot", async () => {
+    const h = await mountMotionPet(["Idle", "Thinking", "Jumping", "Done"], { head: ["Jumping"] });
+    await h.tap();
+    expect(h.manager.state.currentGroup).toBe("Jumping");
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await act(async () => { h.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" }); });
+    expect(h.manager.state.currentGroup).toBe("Done");
+  });
+
+  it("tracks a cold native preview and resumes focus when loading fails", async () => {
+    const h = await mountMotionPet(["Idle", "TapHead"]);
+    const cold = h.manager.hold("TapHead");
+    const select = h.anchor.querySelector("select")!;
+    await act(async () => {
+      select.value = "TapHead\u00000";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      h.manager.frame();
+    });
+    expect(h.manager.state.reservedGroup).toBe("TapHead");
+    expect(h.value("请求阶段")).toBe("pending");
+    await act(async () => { cold.reject(new Error("unavailable motion")); });
+    expect(h.value("请求阶段")).toBe("failed");
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new MouseEvent("pointermove", { clientX: 10, clientY: 20 }));
+    });
+    expect(h.model.focus).toHaveBeenLastCalledWith(10, 20);
+  });
+
+  it("reports completion without pretending a finished native preview is still playing", async () => {
+    const h = await mountMotionPet(["TapHead"]);
+    const select = h.anchor.querySelector("select")!;
+    await act(async () => {
+      select.value = "TapHead\u00000";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(h.value("播放阶段")).toBe("playing");
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBeUndefined();
+    expect(h.value("播放阶段")).toBe("finished");
+    expect(h.value("请求阶段")).toBe("finished");
   });
 
   it("honors display updates and pause while a model request is pending", async () => {

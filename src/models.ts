@@ -20,7 +20,7 @@ export type MotionMap = Partial<Record<AnimationSlot, string[]>>;
  *  互动槽位保留 `TapBody` 兜底：那是同类动作间的替代，不会伪装成别的状态。 */
 export const DEFAULT_MOTION_MAP: MotionMap = {
   idle: ["Idle"], thinking: ["Thinking", "Working"], error: ["Failed", "Sad"],
-  done: ["Jumping", "Done"], waiting: ["Waiting"], head: ["TapHead", "TapBody"],
+  done: ["Done"], waiting: ["Waiting"], head: ["TapHead", "TapBody"],
   leg: ["TapLeg", "TapBody"], arm: ["TapArm", "TapBody"], body: ["TapBody"],
 };
 

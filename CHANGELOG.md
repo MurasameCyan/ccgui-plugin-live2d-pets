@@ -8,9 +8,13 @@
 - Drag the developer debug panel independently by its title bar. Its position is
   persisted separately from the pet coordinates, survives reopening and reloads,
   and stays within the viewport when the window or panel content changes size.
+- Add an explicit **Exit demo** control; closing diagnostics also cancels demo overrides and resumes the real session state.
 
 ### Fixed
 
+- Preserve cold-loaded interaction and preview requests when a stopped idle emits a late finish. Playback ownership now begins at `motionStart`, and late start promises cannot revive completed actions.
+- Avoid issuing a duplicate default idle request after the runtime has already reserved its automatic idle, preventing a spurious failed-request readout after a successful interaction.
+- Use only `Done` as the default completion candidate instead of trying `Jumping` first. Explicit model mappings remain unchanged.
 - Request a WebGL 2 context explicitly. Pixi 6.5.10 otherwise selects WebGL 1 whenever its user-agent check reports a mobile device, which prevents Cubism 5.3 blend-mode models from rendering.
 - Drop the trailing `Idle` fallback from the `thinking` / `error` / `done` / `waiting`
   motion chains. A model without those groups previously played an idle motion
@@ -36,9 +40,7 @@
 - Re-trigger the state on every developer-mode demo button click instead of toggling
   back to the previous state. Each click starts exactly one state motion, including
   the first click that changes the demo state.
-- Report the state motion outcome in the developer-mode debug panel: the candidate
-  chain, each candidate's return value, and which group actually played. An empty
-  chain, an all-rejected chain, and a successful play are now distinguishable.
+- Separate real state, demo state, current native motion, playback phase, and request phase in the developer panel. Start, finish, preview, interaction, and automatic idle events refresh the readout; candidate chains and results remain request diagnostics rather than a stale current-motion label.
 
 ## [1.0.5] - 2026-10-01
 

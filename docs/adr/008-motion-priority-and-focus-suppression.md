@@ -28,10 +28,11 @@ pixi-live2d-display 的 `MotionManager` 使用 `MotionPriority`（NONE=0 / IDLE=
 
 - 待机动作：`MotionPriority.IDLE(1)`；
 - 状态动作（thinking / waiting / done / error）与互动动作（TapHead / TapLeg / TapArm / TapBody）：`MotionPriority.FORCE(3)`；
-- 启动状态/互动动作前先 `stopAllMotions()`，以支持“同动作重播”（库不会重启同 group+index 正在播放的 motion）；
-- `model.motion()` 返回值按 `Promise<boolean>` 处理：`false`/异常都继续候选链，不再依赖 `try/catch` 作为 fallback 通道；
-- 完成信号统一用 `MotionManager` 的 `motionFinish` 事件；互动动作结束后恢复当前状态动作，状态动作自然结束后不主动重播；
-- 非 idle 动作开始时 `focusController.focus(0, 0, true)` 归零，并让全局 `pointermove` 跳过 focus 更新；`motionFinish` 后解除抑制并恢复最近鼠标位置。
+- 启动状态/互动/原生预览前先作废旧播放归属，再 `stopAllMotions()`，以支持同动作重播；pending 请求与正在播放的动作分开记录；
+- `model.motion()` 返回值按 `Promise<boolean>` 处理：`false`/异常都继续候选链，Promise 只结算启动结果，不能把已结束的短动作重新标记为 playing；
+- `motionStart(group, index)` 为实际开始信号，绑定匹配的 pending 请求；自动 Idle 等无归属动作仍更新当前播放读数；
+- 只有归属于当前请求的 `motionFinish` 才能解除抑制；互动结束后恢复当前状态，预览和状态动作结束后不主动重播。默认 Idle 若由库自动恢复，不重复发起相同请求；
+- 非 idle 请求开始时 `focusController.focus(0, 0, true)` 归零，加载和播放期间都让全局 `pointermove` 跳过 focus 更新；所属动作完成或请求全部失败后解除抑制。
 
 ## Alternatives Considered
 
@@ -59,4 +60,5 @@ pixi-live2d-display 的 `MotionManager` 使用 `MotionPriority`（NONE=0 / IDLE=
 - 动作播放期间宠物不再被鼠标跟随“拽头”，互动动作姿态更干净。
 - 需要维护 `motionSeq` 防异步 fallback 竞态：旧动作被 `stopAllMotions()` 打断后，其未完成的 Promise 不应继续启动候选。
 - `motionFinish` 在库内部 `state.complete()` 前同步触发，恢复动作需延到微任务，避免重入修改 MotionState。
+- `stopAllMotions()` 会重置 MotionState，但不清 MotionManager 的 `playing` 标志；下一帧仍可能发旧 `motionFinish`。发起请求时先清播放归属，避免这个事件恢复状态并清掉新动作的 reservation。
 - 对后续开发：新增动作类型时按“idle=IDLE、必须立即展示=FORCE”归类；需要普通不打断状态的动作可再引入 NORMAL 档。
