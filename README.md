@@ -40,12 +40,11 @@ CC GUI 视口插件：在界面上渲染一只可互动的 Live2D 桌宠，并�
 |---|---|---|
 | 显示宠物 | 开 | 总开关；关闭后零渲染 |
 | 窗口非激活时保持动态 | 关 | 忽略失焦/隐藏暂停，持续跑 ticker |
-| 启用 Cubism 2.1 支持 | **关** | 加载 Cubism 2.1 legacy Core，用于 `.model.json` 旧模型。**该模式只私人本地使用**（见下方「Cubism 2.1 与许可」） |
 | 尺寸 | 160px | 40–400px 主体尺寸 |
 | 渲染帧率 | 30 | 30 / 60 / 不限制 |
 | 人设 | 傲娇 | 内置六套 + 自定义 |
 
-![桌宠配置卡：三个按钮开关、尺寸滑块与帧率档位](docs/media/settings-pet-config.png)
+![宿主设置页的「桌宠配置」入口与配置卡](docs/media/settings-pet-config.png)
 
 ## 模型
 
@@ -53,7 +52,7 @@ CC GUI 视口插件：在界面上渲染一只可互动的 Live2D 桌宠，并�
   `cdn.jsdelivr.net` 直载，模型文件不随插件分发。
 - **自定义**：远程 URL（需在 manifest 增加对应 `network:<host>` 并重新发版，
   插件不绕过宿主网络白名单），或用户明确授权目录中的 `.model3.json`
-  （Cubism 3–5.3）/ `.model.json`（Cubism 2.1，需开启上面的开关）。
+  （Cubism 3–5.3）。
 - **动画映射**：为五种状态与四个互动部位选择模型动作组；未配置槽位按默认候选
   链顺序尝试。非待机状态缺动作时不回退 `Idle`；`done` 只尝试 `Done`。
 - 本地模型不读任意 `file://`。设置里点「选择本地模型目录」授权后填目录内相对
@@ -70,18 +69,6 @@ Core 06.00.0001）与 `pixi-live2d-display` 0.4.0 作为固定版本 bundle 资�
 性能：默认 30fps 封顶（未封顶时 PIXI 可跑到 120–140fps）；页面隐藏或窗口失焦
 暂停 ticker，重复配置更新不累加动画订阅；只暂停本模型的 shared-ticker 订阅，
 不碰 `PIXI.Ticker.shared`。
-
-## Cubism 2.1 与许可
-
-「启用 Cubism 2.1 支持」默认关闭的原因是**许可，不是技术**。该 legacy SDK
-（`live2d.min.js`，2.1.00_1）上游标注 CONFIDENTIAL，其许可只允许在接受
-Live2D SDK 协议后放置于**自己控制的服务器**，再分发授权未取得（细节、来源
-revision 与逐文件 SHA-256 见 [`assets/vendor/README.md`](assets/vendor/README.md)
-的 publication gate）。开关关闭时整条 2.1 运行时不进页面；开启即视为自行确认
-已持有适用许可、仅作本地私人使用。
-
-五个内置模型全是 Cubism 4（`.model3.json`），走**可再分发**的 Cubism 5 Core
-（`live2dcubismcore.RedistributableFiles.txt` 明文列出），不依赖 2.1。
 
 ## 数据位置
 
