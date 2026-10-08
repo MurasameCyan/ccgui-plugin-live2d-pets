@@ -57,6 +57,56 @@ const inputStyle = {
 const sectionTitleStyle = { margin: "16px 0 8px", fontSize: 13, fontWeight: 600, color: "#888" };
 const panelTabStyle = { ...buttonStyle, marginLeft: 0, padding: "4px 12px" };
 const panelTabActiveStyle = { ...panelTabStyle, background: "rgba(120,170,255,.26)", color: "#fff" };
+/** 按钮式开关：轨道 + 滑块，语义用 role="switch"（替代原生 checkbox）。 */
+const switchTrackStyle = {
+  position: "relative" as const,
+  flex: "0 0 auto",
+  width: 34,
+  height: 18,
+  padding: 0,
+  borderRadius: 999,
+  border: "none",
+  cursor: "pointer",
+  transition: "background .15s",
+};
+const switchKnobStyle = {
+  position: "absolute" as const,
+  top: 2,
+  width: 14,
+  height: 14,
+  borderRadius: "50%",
+  background: "#fff",
+  transition: "left .15s",
+};
+
+function ToggleSwitch(props: {
+  checked: boolean;
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  onChange: (next: boolean) => void;
+}): ReactNode {
+  const { checked, label, hint, disabled, onChange } = props;
+  return createElement("div",
+    { style: { display: "flex", alignItems: "center", gap: 8 }, title: hint },
+    createElement("button", {
+      type: "button",
+      role: "switch",
+      "aria-checked": checked,
+      "aria-label": label,
+      disabled,
+      onClick: () => onChange(!checked),
+      style: {
+        ...switchTrackStyle,
+        background: checked ? "rgba(120,170,255,.75)" : "rgba(128,128,128,.32)",
+        opacity: disabled ? 0.5 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+      },
+    }, createElement("span", { style: { ...switchKnobStyle, left: checked ? 18 : 2 } })),
+    createElement("span", { style: { fontSize: 13 } }, label),
+  );
+}
+
 
 const hostSelectTriggerClass = [
   "flex h-8 w-auto cursor-pointer items-center justify-between gap-1 rounded-lg px-2 py-1.5",
@@ -658,13 +708,29 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     createElement("h3", { key: "title", style: { margin: "0 0 4px" } }, "桌宠配置"),
     createElement("p", { key: "sub", style: { margin: "0 0 12px", color: "#888", fontSize: 12 } }, "Live2D 桌宠由 CC GUI 插件运行时管理。"),
     createElement("div", { key: "basic", style: rowStyle },
-      createElement("label", null,
-        createElement("input", { type: "checkbox", checked: view.config.enabled, disabled: !writable, onChange: (event: Event) => write("enabled", (event.currentTarget as HTMLInputElement).checked) }),
-        " 显示宠物",
+      createElement(ToggleSwitch, {
+        key: "enabled",
+        checked: view.config.enabled,
+        label: "显示宠物",
+        disabled: !writable,
+        onChange: (next: boolean) => write("enabled", next),
+      }),
+      createElement("div", { key: "keep-animating", style: { marginTop: 8 } },
+        createElement(ToggleSwitch, {
+          checked: view.config.keepAnimatingWhenInactive,
+          label: "窗口非激活时保持动态",
+          disabled: !writable,
+          onChange: (next: boolean) => write("keepAnimatingWhenInactive", next),
+        }),
       ),
-      createElement("label", { style: { display: "block", marginTop: 8 } },
-        createElement("input", { type: "checkbox", checked: view.config.keepAnimatingWhenInactive, disabled: !writable, onChange: (event: Event) => write("keepAnimatingWhenInactive", (event.currentTarget as HTMLInputElement).checked) }),
-        " 窗口非激活时保持动态",
+      createElement("div", { key: "cubism2", style: { marginTop: 8 } },
+        createElement(ToggleSwitch, {
+          checked: view.config.cubism2Enabled,
+          label: "启用 Cubism 2.1 支持",
+          hint: "该模式只私人本地使用",
+          disabled: !writable,
+          onChange: (next: boolean) => write("cubism2Enabled", next),
+        }),
       ),
       createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10 } },
         "尺寸",

@@ -1,0 +1,62 @@
+# 发版流水线（市场规范 §9.2：tag = manifest version，无 v 前缀）。
+# 推送 tag 触发：validate → 校验 tag 与 manifest version 一致 → 构建 →
+# 发 Release，附带市场三件套（manifest.json / main.js）、vendor 运行时与
+# 可本地安装的 zip。
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.1
+
+      - run: bun install --frozen-lockfile
+
+      - name: Validate plugin (typecheck + tests + build + manifest)
+        run: bun run validate
+
+      - name: Check tag matches manifest version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json','utf8')).version")"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "tag $TAG != manifest version $VERSION"
+            exit 1
+          fi
+
+      - name: Assemble release artifacts
+        shell: bash
+        run: |
+          version="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json','utf8')).version")"
+          mkdir -p release package/ccgui-plugin-live2d-pets
+          # 市场索引只固定扁平附件名（host plugins/market.rs::is_valid_asset_name）。
+          cp dist/manifest.json dist/main.js release/
+          # 本地安装包：完整目录树（vendor/ 运行时由插件自身资源桥加载）。
+          cp dist/main.js dist/manifest.json README.md LICENSE package/ccgui-plugin-live2d-pets/
+          cp -R dist/vendor package/ccgui-plugin-live2d-pets/vendor
+          cp -R dist/icons package/ccgui-plugin-live2d-pets/icons
+          (cd package && zip -qr "../release/ccgui-plugin-live2d-pets-${version}.zip" ccgui-plugin-live2d-pets)
+          (cd release && sha256sum manifest.json main.js "ccgui-plugin-live2d-pets-${version}.zip" > checksums.txt)
+          cat release/checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/manifest.json
+            release/main.js
+            release/checksums.txt
+            release/ccgui-plugin-live2d-pets-*.zip
+          fail_on_unmatched_files: true

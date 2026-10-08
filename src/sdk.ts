@@ -2,7 +2,7 @@
  * Minimal local mirror of the host SDK contract used by this standalone
  * plugin. Keep signatures in sync with packages/plugin-sdk/src/context.ts.
  *
- * @ccgui/plugin-sdk mirror v0.3.17
+ * @ccgui/plugin-sdk mirror v0.3.20
  */
 export type Disposer = () => void;
 export type ReactNode = unknown;

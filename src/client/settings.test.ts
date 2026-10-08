@@ -198,13 +198,24 @@ describe("pet settings model sources", () => {
 
   it("toggles keeping the pet animated while the window is inactive", async () => {
     const { container, runtime } = await mountSettings();
-    const label = [...container.querySelectorAll("label")].find((node) => (node.textContent || "").includes("窗口非激活时保持动态"));
-    expect(label, "inactive-animation toggle").toBeDefined();
-    const checkbox = label!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(checkbox.checked).toBe(false);
+    const toggle = container.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="窗口非激活时保持动态"]');
+    expect(toggle, "inactive-animation switch").not.toBeNull();
+    expect(toggle!.getAttribute("aria-checked")).toBe("false");
 
-    await act(async () => { checkbox.click(); await Promise.resolve(); });
+    await act(async () => { toggle!.click(); await Promise.resolve(); });
     expect(runtime.snapshot().config.keepAnimatingWhenInactive).toBe(true);
+  });
+
+  it("keeps Cubism 2.1 support off by default and turns it on from the switch", async () => {
+    const { container, runtime } = await mountSettings();
+    const toggle = container.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="启用 Cubism 2.1 支持"]');
+    expect(toggle, "cubism 2.1 switch").not.toBeNull();
+    expect(toggle!.getAttribute("aria-checked")).toBe("false");
+    expect(runtime.snapshot().config.cubism2Enabled).toBe(false);
+    expect(toggle!.closest<HTMLElement>("[title]")?.title).toBe("该模式只私人本地使用");
+
+    await act(async () => { toggle!.click(); await Promise.resolve(); });
+    expect(runtime.snapshot().config.cubism2Enabled).toBe(true);
   });
 
 
