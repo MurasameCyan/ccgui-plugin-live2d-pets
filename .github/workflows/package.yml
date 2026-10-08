@@ -35,7 +35,8 @@ jobs:
           mkdir -p package/ccgui-plugin-live2d-pets
           cp dist/main.js dist/manifest.json README.md package/ccgui-plugin-live2d-pets/
           cp -R dist/vendor package/ccgui-plugin-live2d-pets/vendor
-          cp -R dist/icons package/ccgui-plugin-live2d-pets/icons
+          mkdir -p package/ccgui-plugin-live2d-pets/assets
+          cp -R dist/icons package/ccgui-plugin-live2d-pets/assets/icons
           cd package
           zip -r "ccgui-plugin-live2d-pets-${version}.zip" ccgui-plugin-live2d-pets
           sha256sum "ccgui-plugin-live2d-pets-${version}.zip" > SHA256SUMS

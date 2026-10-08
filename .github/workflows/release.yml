@@ -47,7 +47,10 @@ jobs:
           # 本地安装包：完整目录树（vendor/ 运行时由插件自身资源桥加载）。
           cp dist/main.js dist/manifest.json README.md LICENSE package/ccgui-plugin-live2d-pets/
           cp -R dist/vendor package/ccgui-plugin-live2d-pets/vendor
-          cp -R dist/icons package/ccgui-plugin-live2d-pets/icons
+          # icon 是仓库相对路径，本地安装没有市场那步「索引图落盘」，
+          # 包内必须与 manifest.icon 同路径，否则 plugin_read_artwork 读不到。
+          mkdir -p package/ccgui-plugin-live2d-pets/assets
+          cp -R dist/icons package/ccgui-plugin-live2d-pets/assets/icons
           (cd package && zip -qr "../release/ccgui-plugin-live2d-pets-${version}.zip" ccgui-plugin-live2d-pets)
           (cd release && sha256sum manifest.json main.js "ccgui-plugin-live2d-pets-${version}.zip" > checksums.txt)
           cat release/checksums.txt

@@ -115,5 +115,17 @@ for (const relativePath of [
 ]) {
   if (existsSync(resolve(root, relativePath))) throw new Error(`obsolete runtime artifact: ${relativePath}`);
 }
+// `icon` is a repo-relative path. A marketplace install materializes the index
+// artwork at exactly that path, but a local directory install has no such step:
+// the packaged tree must carry the file there or `plugin_read_artwork` silently
+// falls back to the letter tile. Keep the manifest, the repo file and both
+// packaging workflows agreeing on one path.
+if (typeof manifest.icon !== "string" || !manifest.icon) throw new Error("manifest.icon must be a repo-relative path");
+if (!statSync(resolve(root, manifest.icon)).isFile()) throw new Error(`manifest.icon does not exist in the repo: ${manifest.icon}`);
+for (const workflow of [".github/workflows/package.yml", ".github/workflows/release.yml"]) {
+  const source = readFileSync(resolve(root, workflow), "utf8");
+  const target = `package/ccgui-plugin-live2d-pets/${manifest.icon.replace(/\/[^/]+$/, "")}`;
+  if (!source.includes(target)) throw new Error(`${workflow} does not package manifest.icon at ${target}`);
+}
 
 console.log(`validated ${manifest.id} ${manifest.version}: ${Math.round(statSync(mainPath).size / 1024)} KiB main bundle`);

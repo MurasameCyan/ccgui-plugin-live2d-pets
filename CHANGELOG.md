@@ -11,6 +11,11 @@
 
 ### Fixed
 
+- Package the manifest icon at its declared repo-relative path. A marketplace
+  install materializes the index artwork there, but a local directory install
+  has no such step, so the shipped icon was unreachable and the plugin fell
+  back to a letter tile. `validate` now fails when the manifest, the repo file
+  and either packaging workflow disagree on that path.
 - Dock against the measured opaque-pixel rectangle rather than the authored canvas or animation-growth padding, while retaining the complete animation buffer.
 - Preserve signed viewport offsets through saves, unrelated updates and reloads; restore the saved anchor after model warmup and viewport resizing instead of keeping an early temporary clamp.
 - Preserve cold-loaded interaction and preview requests when a stopped idle emits a late finish. Playback ownership now begins at `motionStart`, and late start promises cannot revive completed actions.
