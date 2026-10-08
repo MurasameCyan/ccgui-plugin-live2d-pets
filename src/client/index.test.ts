@@ -436,15 +436,15 @@ describe("pet overlay display lifecycle", () => {
     expect(model.motion).toHaveBeenCalledWith("tap_body", undefined, 3);
   });
 
-  it("tries the default state candidates in order instead of shuffling the Idle fallback", async () => {
-    // The default chain ends in Idle as a last resort. Shuffling it lets Idle
-    // start first and silently swallow the state motion.
+  it("tries the default state candidates in declaration order", async () => {
+    // Ordered, never shuffled: a shuffled chain lets a later candidate start
+    // first and swallow the preferred state motion.
     const model = makeModel();
     model.internalModel.motionManager.definitions = { Idle: [{}], Thinking: [{}], Working: [{}] };
     const harness = await mountPet({ model });
     model.motion.mockClear();
     model.motion.mockImplementation(async (...args: unknown[]) => args[0] !== "Working");
-    // A shuffled default chain would deterministically reverse into Idle first.
+    // A shuffled default chain would deterministically reverse the preference.
     vi.spyOn(Math, "random").mockReturnValue(0);
     await act(async () => {
       harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
@@ -453,6 +453,70 @@ describe("pet overlay display lifecycle", () => {
 
     const started = (model.motion.mock.calls as unknown as unknown[][]).map((call) => call[0]);
     expect(started).toEqual(["Thinking"]);
+  });
+
+  it("plays nothing when a state's motion groups are all missing, instead of degrading to idle", async () => {
+    // A model without either completion group must not silently play Idle.
+    const model = makeModel();
+    model.internalModel.motionManager.definitions = { Idle: [{}] };
+    const harness = await mountPet({ model });
+    // A real model rejects a group it does not have; the default mock accepts
+    // everything, which would stop the chain at its first candidate.
+    const groups = Object.keys(model.internalModel.motionManager.definitions);
+    model.motion.mockClear();
+    model.motion.mockImplementation(async (...args: unknown[]) => groups.includes(args[0] as string));
+    await act(async () => {
+      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      await Promise.resolve();
+    });
+
+    const started = (model.motion.mock.calls as unknown as unknown[][]).map((call) => call[0]);
+    // done exhausted Jumping and Done; it must not fall through to Idle.
+    expect(started).toContain("Jumping");
+    expect(started).not.toContain("Idle");
+  });
+
+  it("reports the state motion outcome in the debug readout", async () => {
+    // The readout is the evidence trail for "done did nothing": it must say
+    // which chain ran, what each candidate returned, and what actually played.
+    const model = makeModel();
+    model.internalModel.motionManager.definitions = { Idle: [{}], Thinking: [{}] };
+    const groups = Object.keys(model.internalModel.motionManager.definitions);
+    model.motion.mockImplementation(async (...args: unknown[]) => groups.includes(args[0] as string));
+    const harness = await mountPet({ model, config: { developerMode: true, debug: true } });
+
+    await act(async () => {
+      harness.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      await Promise.resolve();
+    });
+    const text = () => harness.anchor.textContent ?? "";
+    expect(text()).toContain("motion[thinking]: Thinking");
+    expect(text()).toContain("Thinking=true");
+
+    await act(async () => {
+      harness.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      await Promise.resolve();
+    });
+    // done has no Jumping/Done on this model and must not borrow Idle.
+    expect(text()).toContain("motion[done]: none(all rejected)");
+    expect(text()).toContain("Jumping=false");
+    expect(text()).toContain("Done=false");
+  });
+
+  it("starts exactly one state motion on each of seven consecutive demo clicks", async () => {
+    const model = makeModel();
+    model.internalModel.motionManager.definitions = { Idle: [{}], Jumping: [{}] };
+    const harness = await mountPet({ model, config: { developerMode: true, debug: true } });
+    const done = Array.from(harness.anchor.querySelectorAll("button"))
+      .find((button) => button.textContent === "done")!;
+    model.motion.mockClear();
+
+    for (let click = 1; click <= 7; click += 1) {
+      await act(async () => { done.click(); });
+      const groups = (model.motion.mock.calls as unknown[][]).map((call) => call[0]);
+      expect(groups).toEqual(Array(click).fill("Jumping"));
+    }
   });
 
   it("honors display updates and pause while a model request is pending", async () => {

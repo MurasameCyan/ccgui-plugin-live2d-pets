@@ -9,10 +9,13 @@
 ### Fixed
 
 - Request a WebGL 2 context explicitly. Pixi 6.5.10 otherwise selects WebGL 1 whenever its user-agent check reports a mobile device, which prevents Cubism 5.3 blend-mode models from rendering.
+- Drop the trailing `Idle` fallback from the `thinking` / `error` / `done` / `waiting`
+  motion chains. A model without those groups previously played an idle motion
+  instead, hiding the missing-group case behind ordinary idle animation.
 - Try the built-in default motion candidates in declaration order. The resolved
   animation map previously carried the defaults as if they were user overrides, so the
-  ordered chain was shuffled and its trailing `Idle` fallback could start first and
-  swallow the state motion.
+  ordered chain was shuffled and a later candidate could start first and swallow the
+  state motion.
 - Bind the drawable vertex and opacity accessors to their owners when covering live mesh
   deformation. They are prototype methods on the bundled runtime, so the unbound
   references threw on first use and left the model canvas hidden.
@@ -24,6 +27,15 @@
   plugin hot reload, re-enable, or a replaced overlay runtime. Completion and failure were
   silently discarded, leaving the pet at `idle`; turns already settled by this runtime stay
   ignored so late events cannot revive them.
+
+### Changed
+
+- Re-trigger the state on every developer-mode demo button click instead of toggling
+  back to the previous state. Each click starts exactly one state motion, including
+  the first click that changes the demo state.
+- Report the state motion outcome in the developer-mode debug panel: the candidate
+  chain, each candidate's return value, and which group actually played. An empty
+  chain, an all-rejected chain, and a successful play are now distinguishable.
 
 ## [1.0.5] - 2026-10-01
 

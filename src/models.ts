@@ -13,9 +13,14 @@ export interface BuiltinPreset {
 export type AnimationSlot = "idle" | "thinking" | "error" | "done" | "waiting" | "head" | "leg" | "arm" | "body";
 export const ANIMATION_SLOTS: readonly AnimationSlot[] = ["idle", "thinking", "error", "done", "waiting", "head", "leg", "arm", "body"];
 export type MotionMap = Partial<Record<AnimationSlot, string[]>>;
+/** 默认候选链。
+ *  状态槽位（thinking/error/done/waiting）**不得**以 `Idle` 兜底：状态动作全部失败时
+ *  应当什么都不播、保持当前姿势，而不是静默降级成一个 idle 动作——那和真正的 idle
+ *  段肉眼无法区分，会把「这个模型没有该状态的动作」伪装成「功能正常」。
+ *  互动槽位保留 `TapBody` 兜底：那是同类动作间的替代，不会伪装成别的状态。 */
 export const DEFAULT_MOTION_MAP: MotionMap = {
-  idle: ["Idle"], thinking: ["Thinking", "Working", "Idle"], error: ["Failed", "Sad", "Idle"],
-  done: ["Jumping", "Done", "Idle"], waiting: ["Waiting", "Idle"], head: ["TapHead", "TapBody"],
+  idle: ["Idle"], thinking: ["Thinking", "Working"], error: ["Failed", "Sad"],
+  done: ["Jumping", "Done"], waiting: ["Waiting"], head: ["TapHead", "TapBody"],
   leg: ["TapLeg", "TapBody"], arm: ["TapArm", "TapBody"], body: ["TapBody"],
 };
 

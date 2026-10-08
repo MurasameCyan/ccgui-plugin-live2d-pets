@@ -318,6 +318,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let debugMotionSelect: HTMLSelectElement | null = null
   /** 调试面板状态文本容器：与演示按钮/动画预览并列，避免被 textContent 覆盖。 */
   let debugTextEl: HTMLDivElement | null = null
+  /** 最近一次 applyState 收到的快照：renderDebugText 可在状态动作结算时独立重绘。 */
+  let lastDebugView: PetStateView | null = null
+  /** 上一次状态动作的实际结果：候选链、命中的组名、每个候选的返回值。
+   *  用于在 debug 面板直接区分「压根没发」「发了但全部返回 false」「命中了哪个组」。 */
+  let lastStateMotion: { slot: string; chain: string[]; played: string | null; results: string[] } | null = null
   /** 是否正处于 debug 原生动画预览：预览期间抑制 focus，结束后只恢复跟随，不触发状态恢复。 */
   let previewActive = false
   let canvas: HTMLCanvasElement | null = null
@@ -605,7 +610,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   async function startMotionWithPriority(
     names: readonly string[],
     priority: MotionPriority,
-    options: { suppressFocus: boolean; isInteraction: boolean },
+    options: { suppressFocus: boolean; isInteraction: boolean; track?: string },
   ): Promise<boolean> {
     if (!model || names.length === 0) return false
     const seq = ++motionSeq
@@ -620,17 +625,29 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (options.isInteraction) interactionActive = true
     // 重播同一动作前必须清 MotionState；否则库会因“同 group+index 已激活”拒绝启动。
     currentModel.internalModel?.motionManager?.stopAllMotions?.()
+    const results: string[] = []
+    const track = (played: string | null): void => {
+      if (!options.track) return
+      lastStateMotion = { slot: options.track, chain: [...names], played, results: [...results] }
+      renderDebugText()
+    }
     for (const name of names) {
       if (seq !== motionSeq || !model) return false
       try {
         const ok = await model.motion(name, undefined, priority)
         if (seq !== motionSeq || !model) return false
-        if (ok) return true
-      } catch {
+        results.push(`${name}=${ok}`)
+        if (ok) {
+          track(name)
+          return true
+        }
+      } catch (error) {
         if (seq !== motionSeq || !model) return false
+        results.push(`${name}=throw(${error instanceof Error ? error.message : String(error)})`)
         // 单个候选失败/返回 false 时继续尝试下一个
       }
     }
+    track(null)
     // 全部候选都失败：清理本次的互动/焦点标记（若期间已被新动作取代则不动）。
     if (seq === motionSeq) {
       if (options.isInteraction) interactionActive = false
@@ -642,12 +659,17 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   function playState(state: PetState): void {
     if (!model) return
     const names = motionNamesFor(state)
-    if (names.length === 0) return
+    if (names.length === 0) {
+      // 该状态在当前模型上没有任何可用动作组：记录「压根没发」，而不是静默返回。
+      lastStateMotion = { slot: state, chain: [], played: null, results: [] }
+      renderDebugText()
+      return
+    }
     // 任何状态动作（含回到 idle）都会取代正在播放的互动/旧状态动作
     interactionGen += 1
     interactionActive = false
     const priority = state === 'idle' ? MotionPriority.IDLE : MotionPriority.FORCE
-    void startMotionWithPriority(names, priority, { suppressFocus: state !== 'idle', isInteraction: false })
+    void startMotionWithPriority(names, priority, { suppressFocus: state !== 'idle', isInteraction: false, track: state })
   }
 
   /** MotionManager.motionFinish：动作真正播完。互动结束后恢复当前状态动作并解除 focus 抑制。
@@ -706,13 +728,29 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       }
       playState(state)
     }
-    if (debugTextEl) {
-      debugTextEl.textContent =
-        `agent: ${next?.agent ?? '-'}  pet: ${state}  v${next?.version ?? '-'}\n` +
-        `persona: ${activePersonaId}  hitAreas: ${hitAreas.join(',') || '-'}\n` +
-        `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
-        `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}`
-    }
+    lastDebugView = next
+    renderDebugText()
+  }
+
+  /** 渲染调试面板读数。状态动作那行是定位「完成没反应」这类问题的关键证据：
+   *  chain 为空 = 该模型没有可用动作组（压根没发）；played=null = 发了但全部被拒；
+   *  否则就是实际命中的组名，results 给出每个候选的返回值。 */
+  function renderDebugText(): void {
+    if (!debugTextEl) return
+    const next = lastDebugView
+    const state = demoState ?? next?.state ?? 'idle'
+    const m = lastStateMotion
+    const motionLine = m
+      ? `motion[${m.slot}]: ${m.played ?? (m.chain.length === 0 ? 'none(no groups)' : 'none(all rejected)')}`
+        + `  chain: ${m.chain.join('>') || '-'}`
+        + (m.results.length > 0 ? `\n  tried: ${m.results.join(' ')}` : '')
+      : 'motion: (未触发)'
+    debugTextEl.textContent =
+      `agent: ${next?.agent ?? '-'}  pet: ${state}  v${next?.version ?? '-'}\n` +
+      `persona: ${activePersonaId}  hitAreas: ${hitAreas.join(',') || '-'}\n` +
+      `pos: ${Math.round(pos.right)},${Math.round(pos.bottom)}  size: ${pos.size}\n` +
+      `bounds: ${Math.round(baseModelW)}x${Math.round(baseModelH)}  canvas: ${canvas?.width ?? 0}x${canvas?.height ?? 0}\n` +
+      motionLine
   }
 
   /** 静态头像降级（WebGL 不可用 / 模型加载失败，spec §7）。 */
@@ -1583,7 +1621,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         btn.style.cssText = 'padding:4px 0;border-radius:6px;border:1px solid rgba(128,128,128,.25);background:rgba(128,128,128,.1);color:#dbe2ef;font-size:11px;font-family:inherit;cursor:pointer;outline:none'
         btn.onmouseenter = () => { btn.style.background = 'rgba(120,170,255,.22)' }
         btn.onmouseleave = () => { btn.style.background = 'rgba(128,128,128,.1)' }
-        btn.onclick = () => { demoState = demoState === st ? null : st; applyState(view) }
+        // 触发器语义：每次点击都重播该状态动作（同状态不再切回 null），
+        // 便于「连点 7 次看是否每次都出动作」这类人工核对。
+        btn.onclick = () => {
+          const replay = lastState === st
+          demoState = st
+          applyState(view)
+          if (replay) playState(st)
+        }
         demoRow.appendChild(btn)
       }
       debugEl.appendChild(demoRow)
