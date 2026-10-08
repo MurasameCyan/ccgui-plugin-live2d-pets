@@ -69,6 +69,30 @@ describe("PetRuntime", () => {
     runtime.dispose();
   });
 
+  it("keeps the debug panel position independent across pet moves, reset and reload", async () => {
+    const { ctx } = makeContext();
+    const runtime = new PetRuntime(ctx);
+    await runtime.waitUntilReady();
+    try {
+      await runtime.setDisplay({ right: 110, bottom: 70 });
+      await runtime.setDisplay({ debugPosition: { left: 280, top: 160 } });
+      expect(runtime.snapshot().display).toMatchObject({
+        right: 110, bottom: 70, debugPosition: { left: 280, top: 160 },
+      });
+      await runtime.setDisplay({ right: 80, bottom: 100 });
+      await runtime.resetDisplay();
+    } finally {
+      runtime.dispose();
+    }
+    const restored = new PetRuntime(ctx);
+    await restored.waitUntilReady();
+    try {
+      expect(restored.snapshot().display.debugPosition).toEqual({ left: 280, top: 160 });
+    } finally {
+      restored.dispose();
+    }
+  });
+
   it("retains the last valid persona and model lists after malformed reloads", async () => {
     const harness = makeContext();
     const runtime = new PetRuntime(harness.ctx);

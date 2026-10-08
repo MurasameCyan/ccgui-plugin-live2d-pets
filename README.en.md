@@ -13,6 +13,7 @@ A Live2D companion plugin for CC GUI. It mirrors AI session state and provides p
 - Includes five curated Live2D sample model URLs and user-defined remote or explicitly granted local models from the supported `.model.json` (Cubism 2.1) and `.model3.json` (Cubism 3–5.3) formats.
 - Supports per-state and per-interaction motion-group mappings. Default candidates are tried in order; missing non-idle state motions no longer fall back to `Idle`.
 - Provides repeatable state demos, native motion preview, and tap-zone diagnostics behind developer options. The debug panel shows the candidate chain, individual results, and the group that actually started.
+  Drag its title bar to move the panel independently; the saved position is unaffected by pet movement or model size changes.
 - Falls back to a static paw when WebGL or model loading fails.
 
 ## Install in CC GUI

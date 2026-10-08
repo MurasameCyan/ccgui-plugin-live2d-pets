@@ -307,10 +307,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   })
   pushCleanup(() => { stopZoneLoop(); showSpatialZones = false })
   pushCleanup(() => { closeContextMenu(); teardownLayer() })
+  pushCleanup(removeDebugPanel)
 
   let box: HTMLDivElement | null = null
   let bubble: HTMLDivElement | null = null
   let debugEl: HTMLDivElement | null = null
+  let debugPosition: { left: number; top: number } | null = null
+  let debugDrag: { pointerId: number; x: number; y: number; left: number; top: number } | null = null
+  let debugResizeObserver: ResizeObserver | null = null
   /** 调试面板“动画预览”数据：当前模型 MotionManager 暴露的全部具体动画。 */
   let debugMotionList: DebugMotionItem[] = []
   /** 按模型 URL 缓存原生动画列表，避免重复请求同一份 model.json/model3.json。 */
@@ -857,7 +861,6 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       zoneOverlay.style.width = `${width}px`
       zoneOverlay.style.height = `${height}px`
     }
-    syncDebugPanelWidth()
   }
 
   /** 保持主体缩放基准和初始锚点；新增的动画空间通过画布偏移补偿。 */
@@ -1198,12 +1201,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       zoneOverlay.style.cssText = `position:absolute;left:0;top:0;width:${canvas.width}px;height:${canvas.height}px;pointer-events:none;z-index:2;display:${showSpatialZones ? 'block' : 'none'}`
       petLayer.appendChild(canvas)
       petLayer.appendChild(zoneOverlay)
-      // 气泡改为相对 petLayer 定位，避免调试面板插入后把气泡顶到面板上方
+      // 气泡始终跟随模型层，不参与独立调试面板的布局。
       if (bubble && bubble.parentNode !== petLayer) petLayer.appendChild(bubble)
-      if (debugEl) {
-        petLayer.style.marginTop = '36px'
-        syncDebugPanelWidth()
-      }
       box.appendChild(petLayer)
 
       const M = PIXI.live2d?.Live2DModel
@@ -1584,23 +1583,66 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     void currentModel.motion(group, index, MotionPriority.FORCE)
   }
 
-  /** 让调试面板宽度与 canvas 同宽（canvas 尺寸变化/模型加载时同步）。 */
-  function syncDebugPanelWidth(): void {
-    if (!debugEl) return
-    const w = canvas?.width ?? pos.size
-    debugEl.style.width = `${w}px`
-    debugEl.style.boxSizing = 'border-box'
+  /** 调试面板使用视口坐标；模型的位置和画布扩容不改变它。 */
+  function applyDebugPosition(): void {
+    if (!debugEl || !enabled) return
+    const inset = 8
+    const maxLeft = Math.max(inset, window.innerWidth - debugEl.offsetWidth - inset)
+    const maxTop = Math.max(inset, window.innerHeight - debugEl.offsetHeight - inset)
+    debugPosition ??= { left: maxLeft, top: inset }
+    debugPosition.left = Math.min(maxLeft, Math.max(inset, debugPosition.left))
+    debugPosition.top = Math.min(maxTop, Math.max(inset, debugPosition.top))
+    debugEl.style.left = `${debugPosition.left}px`
+    debugEl.style.top = `${debugPosition.top}px`
+  }
+
+  function removeDebugPanel(): void {
+    debugDrag = null
+    debugResizeObserver?.disconnect()
+    debugResizeObserver = null
+    debugEl?.remove()
+    debugEl = null
+    debugMotionSelect = null
+    debugTextEl = null
   }
 
   /** 调试面板动态开关（spec §2）。 */
   function ensureDebugPanel(show: boolean): void {
     if (show && !debugEl && box) {
       debugEl = document.createElement('div')
-      debugEl.style.cssText = 'pointer-events:auto;margin:6px 0 10px;padding:10px 12px;background:rgba(24,26,36,.94);color:#e8eaf0;border:1px solid rgba(128,128,128,.22);border-radius:10px;font:12px/1.5 ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.35)'
+      debugEl.style.cssText = 'position:fixed;z-index:3;pointer-events:auto;box-sizing:border-box;width:400px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;margin:0;padding:10px 12px;background:rgba(24,26,36,.94);color:#e8eaf0;border:1px solid rgba(128,128,128,.22);border-radius:10px;font:12px/1.5 ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.35)'
 
       const debugTitle = document.createElement('div')
-      debugTitle.style.cssText = 'font-size:12px;font-weight:600;color:#aeb8cc;letter-spacing:.3px;margin-bottom:2px'
+      debugTitle.style.cssText = 'font-size:12px;font-weight:600;color:#aeb8cc;letter-spacing:.3px;margin-bottom:2px;cursor:grab;touch-action:none;user-select:none'
       debugTitle.textContent = '调试面板'
+      debugTitle.title = '拖动标题移动调试面板'
+      debugTitle.onpointerdown = (event) => {
+        if (event.button !== 0 || debugDrag || !debugPosition) return
+        event.preventDefault()
+        debugDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, ...debugPosition }
+        debugTitle.setPointerCapture(event.pointerId)
+        debugTitle.style.cursor = 'grabbing'
+      }
+      debugTitle.onpointermove = (event) => {
+        if (!debugDrag || event.pointerId !== debugDrag.pointerId || !debugPosition) return
+        debugPosition.left = debugDrag.left + event.clientX - debugDrag.x
+        debugPosition.top = debugDrag.top + event.clientY - debugDrag.y
+        applyDebugPosition()
+      }
+      const finishDrag = (event: PointerEvent): void => {
+        if (!debugDrag || event.pointerId !== debugDrag.pointerId) return
+        const start = debugDrag
+        debugDrag = null
+        debugTitle.style.cursor = 'grab'
+        if (debugTitle.hasPointerCapture(event.pointerId)) debugTitle.releasePointerCapture(event.pointerId)
+        if (debugPosition && (debugPosition.left !== start.left || debugPosition.top !== start.top)) {
+          void runtime.setDisplay({ debugPosition: { ...debugPosition } })
+            .catch((error) => console.warn('[live2d-pets] 调试面板位置保存失败:', error))
+        }
+      }
+      debugTitle.onpointerup = finishDrag
+      debugTitle.onpointercancel = finishDrag
+      debugTitle.onlostpointercapture = finishDrag
       debugEl.appendChild(debugTitle)
 
       const sectionLabel = (text: string): HTMLDivElement => {
@@ -1656,25 +1698,18 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       debugTextEl = document.createElement('div')
       debugTextEl.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,.18);color:#9aa5b8;font-size:11px;white-space:pre-wrap;word-break:break-all'
       debugEl.appendChild(debugTextEl)
-      syncDebugPanelWidth()
       refreshDebugMotionGroups()
-      // 调试面板放在 petLayer 之前：显示在 canvas 上方；气泡在 petLayer 上方，
-      // 通过 petLayer margin-top 把气泡空间让出来，使顺序为 调试面板 → 气泡 → canvas
-      if (petLayer) {
-        box.insertBefore(debugEl, petLayer)
-        petLayer.style.marginTop = '36px'
-      } else {
-        box.appendChild(debugEl)
+      box.appendChild(debugEl)
+      applyDebugPosition()
+      if (typeof ResizeObserver !== 'undefined') {
+        debugResizeObserver = new ResizeObserver(applyDebugPosition)
+        debugResizeObserver.observe(debugEl)
       }
       applyState(view)
     } else if (!show && debugEl) {
       previewActive = false
       focusSuppressed = false
-      debugEl.parentNode?.removeChild(debugEl)
-      debugEl = null
-      debugMotionSelect = null
-      debugTextEl = null
-      if (petLayer) petLayer.style.marginTop = ''
+      removeDebugPanel()
     }
   }
 
@@ -1820,7 +1855,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       await runtime.waitUntilReady();
       if (disposed) return;
       view = runtime.snapshot();
-      pos = { ...view.display, size: view.config.size };
+      pos = { right: view.display.right, bottom: view.display.bottom, size: view.config.size };
+      debugPosition = view.display.debugPosition ? { ...view.display.debugPosition } : null
 
       // 2. Pointer-transparent anchor inside the host's viewport overlay.
       box = anchor;
@@ -1835,6 +1871,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
 
       // 窗口缩放后视口边界变化：重新按视口上限适配尺寸，并重新钳制位置（spec §4）。
       const onViewportResize = (): void => {
+        applyDebugPosition()
         if (dragging) return
         applySizeNow(pos.size)
         applyPosition()

@@ -5,6 +5,9 @@
 ### Added
 
 - Support Cubism 2.1 `.model.json` models alongside the existing Cubism 3–5.3 `.model3.json` path, including legacy motion metadata and the bundled legacy runtime assets.
+- Drag the developer debug panel independently by its title bar. Its position is
+  persisted separately from the pet coordinates, survives reopening and reloads,
+  and stays within the viewport when the window or panel content changes size.
 
 ### Fixed
 
