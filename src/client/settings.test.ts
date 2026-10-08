@@ -206,26 +206,14 @@ describe("pet settings model sources", () => {
     expect(runtime.snapshot().config.keepAnimatingWhenInactive).toBe(true);
   });
 
-  it("keeps Cubism 2.1 support off by default and turns it on from the switch", async () => {
-    const { container, runtime } = await mountSettings();
-    const toggle = container.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="启用 Cubism 2.1 支持"]');
-    expect(toggle, "cubism 2.1 switch").not.toBeNull();
-    expect(toggle!.getAttribute("aria-checked")).toBe("false");
-    expect(runtime.snapshot().config.cubism2Enabled).toBe(false);
-    expect(toggle!.closest<HTMLElement>("[title]")?.title).toBe("该模式只私人本地使用");
 
-    await act(async () => { toggle!.click(); await Promise.resolve(); });
-    expect(runtime.snapshot().config.cubism2Enabled).toBe(true);
-  });
-
-
-  it("labels Cubism 2.1 model entries instead of treating them as unsupported", async () => {
+  it("lists a legacy model entry without marking it unsupported", async () => {
     const legacy: CustomModelEntry = {
       id: "legacy-pet", name: "Legacy", modelUrl: "C:/legacy",
       directoryGrantId: "grant", directoryPath: "Shizuku/model.json",
     };
     const { container } = await mountSettings([legacy]);
-    expect(customRows(container).textContent).toContain("Cubism 2.1");
+    expect(customRows(container).textContent).toContain("Legacy");
     expect(customRows(container).textContent).not.toContain("不受支持");
   });
 

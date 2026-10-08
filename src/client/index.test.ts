@@ -483,21 +483,6 @@ describe("pet overlay display lifecycle", () => {
     expect(anchor.style.bottom).toBe("20px");
   });
 
-  it("loads the Cubism 2.1 Core only when the setting is on", async () => {
-    const off = await mountPet({});
-    const offSrcs = off.scripts.map((script) => script.src);
-    expect(offSrcs.some((src) => src.endsWith("/vendor/live2d.min.js"))).toBe(false);
-    expect(offSrcs.some((src) => src.endsWith("/vendor/live2dcubismcore.min.js"))).toBe(true);
-    off.unmount();
-
-    const on = await mountPet({ config: { cubism2Enabled: true } });
-    const onSrcs = on.scripts.map((script) => script.src);
-    expect(onSrcs.some((src) => src.endsWith("/vendor/live2d.min.js"))).toBe(true);
-    // Core must precede the shared legacy factory (vendor load contract).
-    expect(onSrcs.findIndex((src) => src.endsWith("/vendor/live2d.min.js")))
-      .toBeLessThan(onSrcs.findIndex((src) => src.endsWith("/vendor/live2d-display.cubism2.min.js")));
-  });
-
   it("keeps the fallback position and visibility reactive after a vendor failure", async () => {
     const { runtime, anchor } = await mountPet({ vendor: "failed" });
     expect(anchor.textContent).toContain("🐾");

@@ -29,7 +29,7 @@ Superseded by ADR-003
 | 维护状态 | advanced 分支持续维护（AI-VTuber 生态在用）；原版 0.4.0 停更不可用 |
 | 附加能力 | 并行动作、末帧保持、唇形同步——对"庆祝动画叠加待机"场景有用 |
 | 许可 | MIT（Core 仍为 Live2D 专有许可，免费商用、需遵守版权声明等条款） |
-| 模型版本 | Cubism 2.1/3/4；**不支持 Cubism 5**（见后果） |
+| 模型版本 | Cubism 3/4；**不支持 Cubism 5**（见后果） |
 
 ## Alternatives Considered
 

@@ -85,15 +85,15 @@ function stopQueue(queue: CubismMotionQueueManager): void {
   while (entries.length) entries.pop()!.release();
 }
 
-/** Register modern model3-shaped settings in the existing Cubism2-only factory.
- * No second common runtime, ticker, remote shaders, or legacy Cubism4 renderer.
+/** Register modern model3-shaped settings in the existing shared factory.
+ * No second common runtime, ticker, remote shaders, or older renderer.
  */
 export function registerCubism5Runtime(): void {
   // Only types are imported from npm; classic scripts own these constructors.
   const globals = globalThis as typeof globalThis & { PIXI?: PixiRuntime };
   const PIXI = globals.PIXI;
   const common = PIXI?.live2d;
-  if (!PIXI || !common?.Live2DFactory) throw new Error('Load Pixi and the Cubism2 common runtime before the Cubism 5 adapter.');
+  if (!PIXI || !common?.Live2DFactory) throw new Error('Load Pixi and the shared common runtime before the Cubism 5 adapter.');
   if (registrations.has(common.Live2DFactory)) return;
 
   class ModernSettings extends common.ModelSettings {

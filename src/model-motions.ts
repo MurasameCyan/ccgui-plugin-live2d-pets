@@ -9,8 +9,9 @@ function recordOf(value: unknown): Record<string, unknown> {
 
 /**
  * Extracts native motion groups without normalizing their names. Modern
- * model3.json uses FileReferences.Motions/File; Cubism 2 uses lowercase
- * motions/file. A modern references block wins when both shapes are present.
+ * model3.json uses FileReferences.Motions/File; the older model.json shape
+ * uses lowercase motions/file. A modern references block wins when both
+ * shapes are present.
  */
 export function modelMotionDefinitions(data: unknown): MotionDefinitions {
   const root = recordOf(data);

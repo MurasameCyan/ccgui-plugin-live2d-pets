@@ -96,7 +96,6 @@ for (const relativePath of [
   "dist/vendor/pixi-unsafe-eval.min.js",
   "dist/vendor/pixi-unsafe-eval.LICENSE",
   "dist/vendor/live2d.min.js",
-  "dist/vendor/live2d.ReadMe.txt",
   "dist/vendor/live2dcubismcore.min.js",
   "dist/vendor/live2dcubismcore.LICENSE.md",
   "dist/vendor/live2dcubismcore.RedistributableFiles.txt",

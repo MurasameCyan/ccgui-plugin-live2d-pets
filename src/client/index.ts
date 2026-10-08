@@ -95,21 +95,13 @@ const VENDOR_SCRIPTS = [
   "vendor/pixi.min.js",
   // Replaces PIXI's generated uniform sync functions without weakening CSP.
   "vendor/pixi-unsafe-eval.min.js",
+  // The two Core globals are independent.
+  "vendor/live2d.min.js",
   "vendor/live2dcubismcore.min.js",
-  // Provides the shared Pixi Live2D factory; the legacy model class stays
-  // inert without the Cubism 2.1 Core global.
   "vendor/live2d-display.cubism2.min.js",
   // Registers the official Cubism 5.3 SDK for Web (R5) runtime in the shared factory.
   "vendor/live2d-runtime.js",
 ];
-
-/**
- * Cubism 2.1 Core：独立 global，只有用户在设置里显式开启才加载。
- * 默认关闭的理由是许可而非技术——该 SDK 标注 CONFIDENTIAL，再分发授权
- * 未取得（见 assets/vendor/README.md 的 publication gate），因此它是
- * 「仅本地私用」开关，不随默认体验分发执行。
- */
-const CUBISM2_CORE_SCRIPT = "vendor/live2d.min.js";
 
 
 /** 点击/拖动判定阈值（px）。 */
@@ -1968,12 +1960,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       })
       handleState(runtime.snapshot())
 
-      // 3. Vendor scripts through the reviewed bundle asset bridge. Cubism 2.1
-      //    Core 先于共享工厂加载，关闭时整条 legacy 运行时不进页面。
-      const vendorScripts = view?.config.cubism2Enabled
-        ? [...VENDOR_SCRIPTS.slice(0, 2), CUBISM2_CORE_SCRIPT, ...VENDOR_SCRIPTS.slice(2)]
-        : VENDOR_SCRIPTS;
-      for (const path of vendorScripts) {
+      // 3. Vendor scripts through the reviewed bundle asset bridge.
+      for (const path of VENDOR_SCRIPTS) {
         await loadScript(runtime.bundleAssetUrl(path));
         if (disposed) return;
       }

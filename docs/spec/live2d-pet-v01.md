@@ -38,7 +38,7 @@
 
 自定义模型支持：
 
-- 远程 `http(s)` `.model.json`（Cubism 2.1）或 `.model3.json`（Cubism 3–5.3）URL；URL 的 host 必须命中 manifest 的精确 `network:<host>` grant。
+- 远程 `http(s)` `.model.json` 或 `.model3.json`（Cubism 3–5.3）URL；URL 的 host 必须命中 manifest 的精确 `network:<host>` grant。
 - 本地模型目录：用户通过资产目录选择器授权目录，再填写目录内相对 `.model.json` 或 `.model3.json` 路径；所有纹理、moc/moc3、动作和其它兄弟资源都从该 grant 加载。
 - 空间分区覆盖字段 `spatialTap`，值为 0–1；空字段继承默认值。
 - 动画映射 `animationMap` 只记录自定义模型或内置预设的**覆盖项**：被覆盖的槽位可选多个动作组，触发时在选中项中随机选择。
@@ -125,7 +125,7 @@
 - 鼠标在页面内移动时调用模型 focus；拖动、隐藏、失焦和非 idle 动作期间抑制 focus，离开页面后复位。
 - 默认在 `document.visibilityState` 非 visible、窗口 blur 或显示开关关闭时暂停 Application ticker 和当前模型的自动更新，恢复时继续；不停止其它消费者共用的全局 ticker。开启「窗口非激活时保持动态」后，失焦/隐藏不再暂停，仅显示开关仍生效。
 - 当前模型最多持有一个 shared ticker 更新订阅：只有启停状态真正变化时才写 `autoUpdate`。配置快照、运行时事件和重复 focus 不得累加订阅或加速动画；暂停与卸载移除本模型订阅，不影响其它消费者。
-- 自定义模型条目若指向 `.model.json`，设置页标注为 Cubism 2.1 并交给 legacy runtime；`.model3.json` 由官方 Cubism 5.3 SDK for Web（R5）加载 Cubism 3–5.3 模型。渲染器创建前把 Pixi 的上下文偏好提升到 WebGL 2，不可用时由 Pixi 回退 WebGL 1；使用 5.3 混合模式或离屏绘制的模型需要 WebGL 2。任一格式加载失败都写入控制台告警（含 URL 与原因），而不是静默降级。
+- 自定义模型条目若指向 `.model3.json`，由官方 Cubism 5.3 SDK for Web（R5）加载 Cubism 3–5.3 模型；`.model.json` 交给共享工厂的旧版模型实现。渲染器创建前把 Pixi 的上下文偏好提升到 WebGL 2，不可用时由 Pixi 回退 WebGL 1；使用 5.3 混合模式或离屏绘制的模型需要 WebGL 2。任一格式加载失败都写入控制台告警（含 URL 与原因），而不是静默降级。
 - 新建 PIXI 实例立即应用当前启停状态，无需等待模型网络请求结束；模型切换不得丢失尚未绘制的尺寸配置。
 - WebGL、vendor 或模型加载失败时销毁渲染层并显示静态爪印。
 
@@ -133,7 +133,7 @@
 
 - 安装/卸载无残留。
 - 默认 Hiyori 可通过已声明的 jsDelivr grant 加载；五条内置清单可切换并显示许可链接。
-- 自定义远程模型和授权目录模型能加载 `.model.json`（Cubism 2.1）或 `.model3.json`（Cubism 3–5.3）及相邻资源；未授权远程域名在设置中明确提示。
+- 自定义远程模型和授权目录模型能加载 `.model.json` 或 `.model3.json`（Cubism 3–5.3）及相邻资源；未授权远程域名在设置中明确提示。
 - 设置重载后配置、位置、人设和模型列表保持。
 - 真实 CC GUI turn hook 能驱动全部五态，长思考/审批阶段按时间推进。
 - 点击、拖动、鼠标跟随、完成庆祝、隐藏和失焦暂停均不影响宿主输入。

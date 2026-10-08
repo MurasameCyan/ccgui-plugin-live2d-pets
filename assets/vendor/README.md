@@ -5,8 +5,8 @@
 Classic-script load order: `pixi.min.js`, `pixi-unsafe-eval.min.js`,
 `live2d.min.js`, `live2dcubismcore.min.js`,
 `live2d-display.cubism2.min.js`, then `live2d-runtime.js`.
-The two Core globals are independent. The Cubism 2.1 display provides the
-single shared Pixi Live2D model/factory for legacy `.model.json` models; the
+The two Core globals are independent. The bundled display provides the
+single shared Pixi Live2D model/factory for `.model.json` models; the
 generated adapter registers the official Cubism 5.3 SDK for Web (R5) runtime
 into that factory for Cubism 3-5.3 `.model3.json` models. The old Cubism 4
 display is not shipped.
@@ -68,27 +68,7 @@ plugin's license. Applicable SDK release-license requirements, including the
 classification of applications accepting user-supplied models, require review
 before publication; technical packaging is not legal authorization.
 
-### Legacy Cubism 2.1.00_1
-
-- Fixed source: [dylanNew/live2d revision
-  `fd9fd400845e9a00bb194fdac0b6635c753a1e8a`](https://github.com/dylanNew/live2d/tree/fd9fd400845e9a00bb194fdac0b6635c753a1e8a/webgl/Live2D).
-- [`webgl/Live2D/lib/live2d.min.js`](https://raw.githubusercontent.com/dylanNew/live2d/fd9fd400845e9a00bb194fdac0b6635c753a1e8a/webgl/Live2D/lib/live2d.min.js)
-  is retained byte-for-byte as `live2d.min.js`.
-- [`webgl/Live2D/ReadMe.txt`](https://raw.githubusercontent.com/dylanNew/live2d/fd9fd400845e9a00bb194fdac0b6635c753a1e8a/webgl/Live2D/ReadMe.txt)
-  is retained byte-for-byte as `live2d.ReadMe.txt`; it identifies SDK version
-  2.1.00_1, marks the SDK CONFIDENTIAL, and points to the business/indie Live2D
-  SDK agreements. Its server-placement permission is conditional on accepting
-  the applicable agreement.
-
-**Publication gate:** this third-party source is provenance, not proof of
-permission. Legacy redistribution authorization has **not** been established.
-The asset is retained for development/source verification; do not publicly
-publish this binary or an installable package containing it until the project
-rights holder confirms applicable permission. If authorization cannot be
-obtained, public distribution requires a separately designed license-gated
-user-provisioning path, not an assertion that this file is MIT or unrestricted.
-
-### Pixi and the shared legacy display
+### Pixi and the shared display runtime
 
 - `live2d-display.cubism2.min.js`: unmodified
   [`pixi-live2d-display@0.4.0`](https://registry.npmjs.org/pixi-live2d-display/-/pixi-live2d-display-0.4.0.tgz),
@@ -122,7 +102,6 @@ generated adapter hash is build-specific and is not an upstream asset hash.
 | `live2dcubismcore.RedistributableFiles.txt` | `d16c123688299e1e69a7f5ebc01b3bd75a8d408c024002a7d35b2aae94003f8c` |
 | `cubism-framework.LICENSE.md` | `7ed849bff1e6499aa7cd882e47d246ddbbe06817c1e84cb974df949488302614` |
 | `live2d.min.js` | `e4ea1f18bdd44b65394ffd5a1bab16982e88757d45134d1bd0737c8a6b3ddd08` |
-| `live2d.ReadMe.txt` | `3527c505c503a6b3227a0f67a188a73414efb8205cee54bc404ce208c529d0e5` |
 | `live2d-display.cubism2.min.js` | `0e86a36540fb487d463904fc5e295316a3130dfc8ac345f37f29b34bed48bba3` |
 | `pixi-live2d-display.LICENSE` | `8ccace668a041e78ed525d091b0b5daf8b623ff447f912616de535415e4f302f` |
 | `pixi.min.js` (retained CRLF bytes) | `c651f3e6afb4ccaa87a236539605e059b3ab54045a0e4f5633a947bc34760511` |

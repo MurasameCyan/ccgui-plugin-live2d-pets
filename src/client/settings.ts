@@ -3,7 +3,6 @@ import type { ReactNode } from "../sdk";
 import type { PetRuntime, PetStateView } from "../runtime";
 import {
   ANIMATION_SLOTS,
-  isLegacyModelLocation,
   isRemoteModelUrl,
   isSupportedModelLocation,
   type AnimationSlot,
@@ -723,15 +722,6 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
           onChange: (next: boolean) => write("keepAnimatingWhenInactive", next),
         }),
       ),
-      createElement("div", { key: "cubism2", style: { marginTop: 8 } },
-        createElement(ToggleSwitch, {
-          checked: view.config.cubism2Enabled,
-          label: "启用 Cubism 2.1 支持",
-          hint: "该模式只私人本地使用",
-          disabled: !writable,
-          onChange: (next: boolean) => write("cubism2Enabled", next),
-        }),
-      ),
       createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10 } },
         "尺寸",
         createElement("input", { type: "range", min: 40, max: 400, value: sizeDraft, disabled: !writable, onChange: (event: Event) => scheduleSizeWrite(Number((event.currentTarget as HTMLInputElement).value)), style: { flex: 1 } }),
@@ -792,11 +782,10 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       );
     }
     const flags = [entry.spatialTap && "分区已覆盖", entry.animationMap && "动画已映射"].filter(Boolean).join(" · ");
-    const cubism2 = isLegacyModelLocation(entry.directoryPath ?? "") || isLegacyModelLocation(entry.modelUrl ?? "");
     return createElement(ModelRow, {
       key: entry.id,
       selected: view.config.model === entry.id,
-      label: `${entry.name}${flags ? ` · ${flags}` : ""}${cubism2 ? " · Cubism 2.1" : ""}`,
+      label: `${entry.name}${flags ? ` · ${flags}` : ""}`,
       disabled: !writable,
       onSelect: () => write("model", entry.id),
       actions: createElement("span", null,

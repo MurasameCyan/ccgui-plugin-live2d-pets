@@ -42,7 +42,7 @@ describe("Live2D model and persona data", () => {
     expect(view.models.map((model) => model.id)).toEqual(["ok"]);
   });
 
-  it("accepts both Cubism 2.1 model.json and Cubism 3-5.3 model3.json model sources", () => {
+  it("accepts both model.json and Cubism 3-5.3 model3.json model sources", () => {
     expect(isSupportedModelLocation("https://example.test/pet.model3.json")).toBe(true);
     expect(isSupportedModelLocation("https://example.test/pet.model.json")).toBe(true);
     const view = parseCustomModels(JSON.stringify({ models: [

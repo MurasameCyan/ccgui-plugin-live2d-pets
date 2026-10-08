@@ -2,7 +2,7 @@ import { vi } from "vitest";
 
 /** Keep PLD's real reservation/start/finish machinery; replace only asset loading and the native queue. */
 export async function createMotionTestRuntime(groups: readonly string[]) {
-  // The common manager ships in the Cubism 2 entrypoint. These unused Core
+  // The common manager ships in PLD's legacy entrypoint. These unused Core
   // constructors only satisfy that entrypoint's registration-time checks.
   vi.stubGlobal("Live2D", {});
   vi.stubGlobal("Live2DMotion", class { updateParam() {} });

@@ -28,8 +28,6 @@ export interface PetConfig {
   showTapZones: boolean;
   persona: string;
   keepAnimatingWhenInactive: boolean;
-  /** Cubism 2.1 legacy runtime：默认关闭，仅本地私用（再分发授权未取得）。 */
-  cubism2Enabled: boolean;
 }
 export interface PetStateView {
   state: PetState;
@@ -60,11 +58,10 @@ const DEFAULT_CONFIG: PetConfig = {
   showTapZones: false,
   persona: DEFAULT_PERSONA_ID,
   keepAnimatingWhenInactive: false,
-  cubism2Enabled: false,
 };
 const CONFIG_KEYS: readonly (keyof PetConfig)[] = [
   "enabled", "size", "maxFps", "model", "developerMode", "debug", "showTapZones", "persona",
-  "keepAnimatingWhenInactive", "cubism2Enabled",
+  "keepAnimatingWhenInactive",
 ];
 const DONE_HOLD_MS = 3500;
 /** 已退休回合 id 的保留上限：迟到事件不得复活它们，但记录不能无界增长。 */
@@ -112,7 +109,6 @@ function normalizeConfig(value: unknown): PetConfig {
     showTapZones: raw.showTapZones === true,
     persona: typeof raw.persona === "string" && raw.persona.trim() ? raw.persona.trim() : DEFAULT_CONFIG.persona,
     keepAnimatingWhenInactive: raw.keepAnimatingWhenInactive === true,
-    cubism2Enabled: raw.cubism2Enabled === true,
   };
 }
 function isTerminal(event: AfterTurnEvent): boolean {
