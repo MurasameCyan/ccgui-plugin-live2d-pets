@@ -9,6 +9,14 @@
   and stays within the viewport when the window or panel content changes size.
 - Add an explicit **Exit demo** control; closing diagnostics also cancels demo overrides and resumes the real session state.
 
+### Changed
+
+- Match the host's switch exactly. The settings toggles mirror
+  `components/base/switch` at `size="sm"`, `shape="pill"` class-for-class
+  instead of approximating it with hand-rolled inline styles, so track size,
+  accent gradient, inset ring, thumb gradient and travel follow host theme
+  tokens. The three developer options are switches too, no longer checkboxes.
+
 ### Fixed
 
 - Package the manifest icon at its declared repo-relative path. A marketplace

@@ -1,7 +1,7 @@
 {
   "id": "ccgui.live2d-pets",
   "name": "Live2D Pets",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "minAppVersion": "1.0.4",
   "sdkVersion": ">=0.3.20",
   "author": "MurasameCyan",

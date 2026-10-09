@@ -206,6 +206,30 @@ describe("pet settings model sources", () => {
     expect(runtime.snapshot().config.keepAnimatingWhenInactive).toBe(true);
   });
 
+  it("drives the developer options through switches, not checkboxes", async () => {
+    const { container, runtime } = await mountSettings();
+    expect(container.querySelector('input[type="checkbox"]'), "no raw checkbox remains").toBeNull();
+
+    const developer = container.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="启用开发者选项"]');
+    expect(developer, "developer-mode switch").not.toBeNull();
+    expect(developer!.getAttribute("aria-checked")).toBe("false");
+
+    // The nested rows only exist once developer mode is on.
+    expect(container.querySelector('button[role="switch"][aria-label="调试面板"]')).toBeNull();
+    await act(async () => { developer!.click(); await Promise.resolve(); });
+    expect(runtime.snapshot().config.developerMode).toBe(true);
+
+    const debugPanel = container.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="调试面板"]');
+    expect(debugPanel, "debug-panel switch").not.toBeNull();
+    await act(async () => { debugPanel!.click(); await Promise.resolve(); });
+    expect(runtime.snapshot().config.debug).toBe(true);
+
+    const tapZones = container.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="显示点击分区（空间回退色块）"]');
+    expect(tapZones, "tap-zone switch").not.toBeNull();
+    await act(async () => { tapZones!.click(); await Promise.resolve(); });
+    expect(runtime.snapshot().config.showTapZones).toBe(true);
+  });
+
 
   it("lists a legacy model entry without marking it unsupported", async () => {
     const legacy: CustomModelEntry = {

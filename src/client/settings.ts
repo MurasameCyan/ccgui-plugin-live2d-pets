@@ -56,27 +56,22 @@ const inputStyle = {
 const sectionTitleStyle = { margin: "16px 0 8px", fontSize: 13, fontWeight: 600, color: "#888" };
 const panelTabStyle = { ...buttonStyle, marginLeft: 0, padding: "4px 12px" };
 const panelTabActiveStyle = { ...panelTabStyle, background: "rgba(120,170,255,.26)", color: "#fff" };
-/** 按钮式开关：轨道 + 滑块，语义用 role="switch"（替代原生 checkbox）。 */
-const switchTrackStyle = {
-  position: "relative" as const,
-  flex: "0 0 auto",
-  width: 34,
-  height: 18,
-  padding: 0,
-  borderRadius: 999,
-  border: "none",
-  cursor: "pointer",
-  transition: "background .15s",
-};
-const switchKnobStyle = {
-  position: "absolute" as const,
-  top: 2,
-  width: 14,
-  height: 14,
-  borderRadius: "50%",
-  background: "#fff",
-  transition: "left .15s",
-};
+/** Host switch, mirrored class-for-class from `components/base/switch`
+ *  (`size="sm"`, `shape="pill"` — what every host settings row uses). The
+ *  plugin renders inside the host document, so these utilities already exist
+ *  in the compiled stylesheet; hand-rolled inline styles drifted from it.
+ *  Semantics stay on a `role="switch"` button: react-aria is not reachable
+ *  from a plugin bundle. */
+const hostSwitchTrackClass = "relative shrink-0 transition-colors duration-200 ease h-4 w-7 rounded-full border-0 p-0";
+const hostSwitchTrackOnClass = "bg-linear-to-b from-accent-500 to-accent-600 shadow-[inset_0_1px_0_0_rgb(255_255_255/0.25),inset_0_0_0_0.5px_var(--color-accent-500)]";
+const hostSwitchTrackOffClass = "bg-background-tertiary-default";
+const hostSwitchThumbClass = [
+  "absolute flex items-center justify-center",
+  "bg-linear-to-b from-control-indicator-background from-[43.837%] to-control-indicator-background-subtle",
+  "shadow-[0_3px_3px_0_rgb(0_0_0/0.03),0_0.75px_0_0_rgb(0_0_0/0.05)]",
+  "transition-transform duration-200 ease size-3 rounded-full left-0.5 top-0.5",
+].join(" ");
+const hostSwitchChipClass = "border-solid bg-linear-to-t from-[43.837%] size-[5px] border-[0.25px] shadow-[0_2px_2px_0_rgb(0_0_0/0.03)] rounded-full";
 
 function ToggleSwitch(props: {
   checked: boolean;
@@ -86,8 +81,11 @@ function ToggleSwitch(props: {
   onChange: (next: boolean) => void;
 }): ReactNode {
   const { checked, label, hint, disabled, onChange } = props;
-  return createElement("div",
-    { style: { display: "flex", alignItems: "center", gap: 8 }, title: hint },
+  return createElement("label",
+    {
+      className: `group inline-flex items-center gap-2 select-none ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`,
+      title: hint,
+    },
     createElement("button", {
       type: "button",
       role: "switch",
@@ -95,14 +93,19 @@ function ToggleSwitch(props: {
       "aria-label": label,
       disabled,
       onClick: () => onChange(!checked),
-      style: {
-        ...switchTrackStyle,
-        background: checked ? "rgba(120,170,255,.75)" : "rgba(128,128,128,.32)",
-        opacity: disabled ? 0.5 : 1,
-        cursor: disabled ? "not-allowed" : "pointer",
-      },
-    }, createElement("span", { style: { ...switchKnobStyle, left: checked ? 18 : 2 } })),
-    createElement("span", { style: { fontSize: 13 } }, label),
+      className: [
+        hostSwitchTrackClass,
+        checked ? hostSwitchTrackOnClass : hostSwitchTrackOffClass,
+        disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+        "outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring focus-visible:ring-offset-2",
+      ].join(" "),
+    }, createElement("span", {
+      "aria-hidden": true,
+      className: `${hostSwitchThumbClass} ${checked ? "translate-x-3" : ""}`,
+    }, createElement("span", {
+      className: `${hostSwitchChipClass} ${checked ? "border-accent-600 from-switch-on-chip-start to-switch-on-chip-end" : "border-border-button-default/50 from-switch-off-chip-start to-switch-off-chip-end"}`,
+    }))),
+    createElement("span", { className: "text-body-medium text-text-primary" }, label),
   );
 }
 
@@ -830,10 +833,27 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     createElement("div", { key: "developer" },
       createElement("div", { style: sectionTitleStyle }, "开发者选项"),
       createElement("div", { style: rowStyle },
-        createElement("label", null, createElement("input", { type: "checkbox", checked: view.config.developerMode, disabled: !writable, onChange: (event: Event) => write("developerMode", (event.currentTarget as HTMLInputElement).checked) }), " 启用开发者选项"),
-        view.config.developerMode && createElement("div", { style: { marginTop: 8 } },
-          createElement("label", { style: { display: "block" } }, createElement("input", { type: "checkbox", checked: view.config.debug, disabled: !writable, onChange: (event: Event) => write("debug", (event.currentTarget as HTMLInputElement).checked) }), " 调试面板"),
-          createElement("label", { style: { display: "block", marginTop: 8 } }, createElement("input", { type: "checkbox", checked: view.config.showTapZones, disabled: !writable, onChange: (event: Event) => write("showTapZones", (event.currentTarget as HTMLInputElement).checked) }), " 显示点击分区（空间回退色块）"),
+        createElement(ToggleSwitch, {
+          checked: view.config.developerMode,
+          label: "启用开发者选项",
+          disabled: !writable,
+          onChange: (next: boolean) => write("developerMode", next),
+        }),
+        view.config.developerMode && createElement("div", { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 8 } },
+          createElement(ToggleSwitch, {
+            key: "debug",
+            checked: view.config.debug,
+            label: "调试面板",
+            disabled: !writable,
+            onChange: (next: boolean) => write("debug", next),
+          }),
+          createElement(ToggleSwitch, {
+            key: "tap-zones",
+            checked: view.config.showTapZones,
+            label: "显示点击分区（空间回退色块）",
+            disabled: !writable,
+            onChange: (next: boolean) => write("showTapZones", next),
+          }),
         ),
       ),
     ),
