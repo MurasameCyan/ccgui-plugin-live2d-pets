@@ -9,8 +9,8 @@ export async function createMotionTestRuntime(groups: readonly string[]) {
   vi.stubGlobal("AMotion", class {});
   vi.stubGlobal("PhysicsHair", { Src: { SRC_TO_X: 0, SRC_TO_Y: 1, SRC_TO_G_ANGLE: 2 } });
   const { MotionManager, Cubism2ModelSettings, MotionPreloadStrategy } = await import("pixi-live2d-display/cubism2");
-  type Motion = { file: string };
-  const definitions = Object.fromEntries(groups.map((group) => [group, [{ file: `${group}.mtn` }]]));
+  type Motion = { file: string; CCGUI?: unknown };
+  const definitions: Record<string, Motion[]> = Object.fromEntries(groups.map((group) => [group, [{ file: `${group}.mtn` }]]));
 
   class TestMotionManager extends MotionManager<Motion, Motion> {
     readonly definitions = definitions;

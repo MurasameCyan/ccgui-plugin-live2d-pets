@@ -49,6 +49,9 @@ bun run validate
 - Local models use the CC GUI asset-directory grant. Select a directory in settings, then enter the relative `.model.json` or `.model3.json` path. The model's sibling textures, moc/moc3, and motion assets are served through the same grant.
 - Users remain responsible for the license terms of custom models.
 
+Model authors can add `CCGUI: { Loop: true, Lyrics: { Duration: 8, Cues: [{ Time: 0, Text: "First line" }, { Time: 4, Text: "Next line" }] } }` to an entry in `FileReferences.Motions`. Times are seconds, starting at zero and increasing within `Duration`. Lyrics loop in order. Natural completion and touch recovery retain the selected group and index; touch and rendering pauses also pause the lyric clock. A new state or Exit demo cancels the old performance. Ordinary models are unchanged, and this metadata does not generate audio.
+
+
 ## Storage
 
 - Scalar settings and placement use the plugin's `ctx.storage` namespace.

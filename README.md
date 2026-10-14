@@ -58,6 +58,28 @@ CC GUI 视口插件：在界面上渲染一只可互动的 Live2D 桌宠，并�
 - 本地模型不读任意 `file://`。设置里点「选择本地模型目录」授权后填目录内相对
   路径，纹理、moc/moc3 与动作资源走同一个目录 grant。
 
+### 模型自带循环台词
+
+模型作者可在 `FileReferences.Motions` 的动作条目中添加 `CCGUI` 元数据：
+
+```json
+{
+  "File": "motions/work.motion3.json",
+  "CCGUI": {
+    "Loop": true,
+    "Lyrics": {
+      "Duration": 8,
+      "Cues": [{ "Time": 0, "Text": "First line" }, { "Time": 4, "Text": "Next line" }]
+    }
+  }
+}
+```
+
+时间单位为秒，首条从 0 开始，后续时间递增且小于 `Duration`。歌词按顺序循环；
+动作自然结束后续播同组同序号，点击互动结束也恢复原变体，歌词从暂停处继续。
+切换真实状态或退出演示会取消旧表演。未声明元数据的模型保持原有行为；此字段不生成音频。
+
+
 ## 渲染栈
 
 PixiJS 6.5.10、同版本 `@pixi/unsafe-eval`、官方 Cubism 5.3 SDK for Web（R5，

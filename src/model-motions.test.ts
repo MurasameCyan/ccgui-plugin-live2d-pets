@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modelMotionDefinitions, modelMotionList, resolveMotionNames } from "./model-motions";
+import { modelMotionDefinitions, modelMotionList, motionPlaybackScript, resolveMotionNames } from "./model-motions";
 
 describe("model motion metadata", () => {
   it("uses modern references before legacy-looking top-level metadata", () => {
@@ -33,5 +33,16 @@ describe("model motion metadata", () => {
     expect(resolveMotionNames(["TapHead", "TapBody"], ["tap_head", "tap_body"])).toEqual(["tap_head", "tap_body"]);
     expect(resolveMotionNames(["Idle"], ["idle"])).toEqual(["idle"]);
     expect(resolveMotionNames(["Unknown"], ["idle"])).toEqual(["Unknown"]);
+  });
+
+  it.each([
+    [{ Time: 1, Text: "Missing opening cue" }],
+    [{ Time: 0, Text: "Opening" }, { Time: 0, Text: "Duplicate time" }],
+    [{ Time: 0, Text: "Opening" }, { Time: 4, Text: "Outside loop" }],
+    [{ Time: 0, Text: " " }],
+    [{ Time: Number.NaN, Text: "Invalid time" }],
+  ])("rejects unusable lyric timelines without changing the loop policy", (...cues) => {
+    expect(motionPlaybackScript({ CCGUI: { Loop: true, Lyrics: { Duration: 4, Cues: cues } } })).toEqual({ loop: true });
+    expect(motionPlaybackScript({ CCGUI: { Lyrics: { Duration: 4, Cues: cues } } })).toBeNull();
   });
 });

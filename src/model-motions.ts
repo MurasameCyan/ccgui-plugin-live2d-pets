@@ -1,10 +1,37 @@
 export type MotionDefinitionItem = Record<string, unknown> | null;
 export type MotionDefinitions = Record<string, MotionDefinitionItem[]>;
 
+export interface MotionPlaybackScript {
+  loop: boolean;
+  lyrics?: { duration: number; cues: Array<{ time: number; text: string }> };
+}
+
 function recordOf(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+/** Optional per-motion model3 metadata; ordinary motions retain their native lifecycle. */
+export function motionPlaybackScript(definition: unknown): MotionPlaybackScript | null {
+  const extension = recordOf(recordOf(definition).CCGUI);
+  const loop = extension.Loop === true;
+  const lyrics = recordOf(extension.Lyrics);
+  const duration = lyrics.Duration;
+  const cues: Array<{ time: number; text: string }> = [];
+  if (typeof duration === "number" && Number.isFinite(duration) && duration > 0 && Array.isArray(lyrics.Cues)) {
+    for (const raw of lyrics.Cues) {
+      const cue = recordOf(raw);
+      if (typeof cue.Time !== "number" || !Number.isFinite(cue.Time) || cue.Time < 0 || cue.Time >= duration
+        || typeof cue.Text !== "string" || !cue.Text.trim()
+        || (cues.length === 0 ? cue.Time !== 0 : cue.Time <= cues[cues.length - 1]!.time)) {
+        return loop ? { loop } : null;
+      }
+      cues.push({ time: cue.Time, text: cue.Text });
+    }
+    if (cues.length > 0) return { loop, lyrics: { duration, cues } };
+  }
+  return loop ? { loop } : null;
 }
 
 /**

@@ -22,7 +22,7 @@ import {
   type SpatialTapConfig,
 } from "../models";
 
-import { modelMotionDefinitions, modelMotionList, resolveMotionNames } from "../model-motions";
+import { modelMotionDefinitions, modelMotionList, motionPlaybackScript, resolveMotionNames, type MotionPlaybackScript } from "../model-motions";
 
 interface DisplayLike { right: number; bottom: number; size: number }
 
@@ -39,6 +39,7 @@ interface MotionRequest {
   chain: readonly string[]
   candidate?: string
   index?: number
+  resume?: boolean
   phase: 'pending' | 'playing' | 'finished' | 'failed'
   results: string[]
 }
@@ -48,6 +49,17 @@ interface MotionPlayback {
   index: number
   phase: 'playing' | 'finished'
   request: MotionRequest | null
+}
+
+interface ScriptedMotion {
+  group: string
+  index: number
+  kind: 'state' | 'preview'
+  slot: string
+  script: MotionPlaybackScript
+  elapsedMs: number
+  tickAt: number | null
+  cueIndex: number
 }
 
 interface ModelLike {
@@ -425,6 +437,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let stagedState: PetState | null = null
   let stageIndex = 0
   let lastState: PetState | null = null
+  let scriptedMotion: ScriptedMotion | null = null
   let demoState: PetState | null = null
   let view: PetStateView | null = null
   let pos: DisplayLike = { right: 24, bottom: 20, size: 160 }
@@ -445,6 +458,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   function syncTicker(): void {
     if (!app) return
     const shouldRun = enabled && (keepAnimatingWhenInactive || !hidden)
+    if (!shouldRun) pauseScriptedMotion()
     // Live2D owns a separate shared-ticker subscription; pause only this
     // model, never PIXI.Ticker.shared (which other plugins may also use).
     // The vendor setter adds a listener on every true assignment, even if already enabled.
@@ -532,6 +546,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
 
   /** 重绘当前阶段文案（阶段推进/瞬态气泡到时回落/拖拽结束后恢复）。 */
   function showStageText(): void {
+    if (scriptedMotion?.script.lyrics) {
+      scriptedMotion.cueIndex = -1
+      syncScriptedMotion()
+      return
+    }
     if (!stagedState) return
     const key = STAGED_COPY_KEYS[stagedState]?.[stageIndex]
     if (!key) return
@@ -575,7 +594,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       stageTimers.push(window.setTimeout(() => {
         stageIndex = i
         // 拖拽中暂停气泡与动作（spec §4），阶段静默推进、松手后恢复新阶段
-        if (!dragging) {
+        if (!dragging && !scriptedMotion && !(lastMotionRequest?.kind === 'interaction'
+          && (lastMotionRequest.phase === 'pending' || lastMotionRequest.phase === 'playing'))) {
           showStageText()
           playState(state)
         }
@@ -625,17 +645,57 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     return resolveMotionNames(names, nativeGroups)
   }
 
+  function pauseScriptedMotion(): void {
+    if (!scriptedMotion || scriptedMotion.tickAt === null) return
+    scriptedMotion.elapsedMs += performance.now() - scriptedMotion.tickAt
+    scriptedMotion.tickAt = null
+  }
+
+  /** Uses the rendering lifecycle, so hidden windows and click actions pause the lyric clock. */
+  function syncScriptedMotion(): void {
+    const playback = scriptedMotion
+    if (!playback) return
+    const active = enabled && (keepAnimatingWhenInactive || !hidden) && !dragging
+      && currentMotion?.phase === 'playing' && currentMotion.request === lastMotionRequest
+      && currentMotion.request?.kind === playback.kind
+      && currentMotion.group === playback.group && currentMotion.index === playback.index
+    if (!active) { pauseScriptedMotion(); return }
+    const now = performance.now()
+    if (playback.tickAt !== null) playback.elapsedMs += now - playback.tickAt
+    playback.tickAt = now
+    const lyrics = playback.script.lyrics
+    if (!lyrics) return
+    const time = playback.elapsedMs / 1000 % lyrics.duration
+    let index = playback.cueIndex
+    if (index < 0 || lyrics.cues[index]!.time > time) index = 0
+    while (index + 1 < lyrics.cues.length && lyrics.cues[index + 1]!.time <= time) index += 1
+    if (index !== playback.cueIndex) {
+      playback.cueIndex = index
+      setBubbleText(lyrics.cues[index]!.text)
+    }
+  }
+
+  function resumeScriptedMotion(): void {
+    const playback = scriptedMotion
+    if (!playback) return
+    void startMotionWithPriority([playback.group], MotionPriority.FORCE, {
+      suppressFocus: true, kind: playback.kind, slot: playback.slot, index: playback.index, resume: true,
+    })
+  }
+
   /** 每次请求先作废旧播放归属；只有 motionStart 确认后才允许 motionFinish 恢复状态。 */
   async function startMotionWithPriority(
     names: readonly string[],
     priority: MotionPriority,
-    options: { suppressFocus: boolean; kind: MotionRequest['kind']; slot: string; index?: number },
+    options: { suppressFocus: boolean; kind: MotionRequest['kind']; slot: string; index?: number; resume?: boolean },
   ): Promise<boolean> {
     if (!model) return false
+    pauseScriptedMotion()
+    if (options.kind !== 'interaction' && !options.resume) scriptedMotion = null
     const currentModel = model
     const request: MotionRequest = {
       seq: ++motionSeq, kind: options.kind, slot: options.slot, chain: names,
-      index: options.index, phase: 'pending', results: [],
+      index: options.index, resume: options.resume, phase: 'pending', results: [],
     }
     lastMotionRequest = request
     // stopAllMotions 不清库的 playing 标志，下一帧仍可能发旧 motionFinish。
@@ -668,6 +728,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     request.phase = 'failed'
     releaseFocusSuppression()
     renderDebugText()
+    if (options.kind === 'interaction' && scriptedMotion) resumeScriptedMotion()
+    else if (options.resume) { scriptedMotion = null; showStageText() }
     return false
   }
 
@@ -685,6 +747,19 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (request) request.phase = 'playing'
     // 无归属的开始事件（如自动 Idle）也必须出现在当前动作读数中。
     currentMotion = { group, index, phase: 'playing', request }
+    if (request && request.kind !== 'interaction') {
+      if (!request.resume) {
+        const definitions = model?.internalModel?.motionManager?.definitions?.[group]
+        const script = motionPlaybackScript(Array.isArray(definitions) ? definitions[index] : null)
+        scriptedMotion = script ? {
+          group, index, kind: request.kind, slot: request.slot, script, elapsedMs: 0, tickAt: null, cueIndex: -1,
+        } : null
+      }
+      if (scriptedMotion) {
+        scriptedMotion.cueIndex = -1
+        syncScriptedMotion()
+      }
+    }
     renderDebugText()
   }
 
@@ -692,6 +767,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   function handleMotionFinish(): void {
     const finished = currentMotion
     if (!finished || finished.phase !== 'playing') return
+    pauseScriptedMotion()
     finished.phase = 'finished'
     const request = finished.request
     if (request && request === lastMotionRequest && request.phase === 'playing') {
@@ -699,6 +775,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       queueMicrotask(() => {
         if (disposed || request.seq !== motionSeq || request !== lastMotionRequest) return
         releaseFocusSuppression()
+        if (scriptedMotion && (request.kind === 'interaction' || scriptedMotion.script.loop)) {
+          resumeScriptedMotion()
+          return
+        }
+        if (scriptedMotion) { scriptedMotion = null; showStageText() }
         // 只有确实开始并完成的互动才恢复状态；预览/状态/旧 Idle 不得清新 reservation。
         if (request.kind === 'interaction' && lastState) {
           // 库已在本帧预留自动 Idle，不重复 stop/start 抢走它的 reservation。
@@ -736,6 +817,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     // stopAllMotions 再按优先级启动，保证状态动作可立即切换、阶段可重播。
     if (state !== lastState) {
       lastState = state
+      scriptedMotion = null
       if (STAGED_DELAYS[state]) {
         enterStaged(state)
       } else {
@@ -1170,6 +1252,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     motionSeq += 1
     lastMotionRequest = null
     currentMotion = null
+    scriptedMotion = null
     focusSuppressed = false
     lastPointerClient = null
     detachMotionEvents?.()
@@ -1326,9 +1409,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       syncBubblePosition()
       // 在模型渲染和形变扩容后更新气泡；只改气泡位置，不改模型坐标。
       app.ticker.add(syncBubblePosition, undefined, TICKER_PRIORITY_UTILITY + 2)
+      app.ticker.add(syncScriptedMotion, undefined, TICKER_PRIORITY_UTILITY + 2)
       detachBubblePosition = () => {
         detachBubblePosition = null
         try { app?.ticker.remove(syncBubblePosition) } catch { /* ticker 已销毁 */ }
+        try { app?.ticker.remove(syncScriptedMotion) } catch { /* ticker 已销毁 */ }
       }
       // 本帧 Core 更新发生在 render 内；先扩容重绘，再让 UTILITY 读取像素。
       app.ticker.add(expandAnimationCover, undefined, TICKER_PRIORITY_UTILITY + 1)
@@ -1818,6 +1903,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     const dy = e.clientY - down.y
     if (!dragging && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
       dragging = true
+      pauseScriptedMotion()
       if (bubble) bubble.style.opacity = '0'
     }
     if (dragging && box) {
@@ -1833,6 +1919,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (e.button !== 0) { down = null; dragging = false; return }
     if (!down) return
     if (dragging) {
+      dragging = false
       void runtime.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {});
       // 拖拽中隐藏的常驻气泡恢复当前阶段文案（spec §4：拖拽中暂停、结束恢复）
       showStageText()
@@ -1914,7 +2001,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
 
       // 气泡层
       bubble = document.createElement('div')
-      bubble.style.cssText = 'position:absolute;left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:8px;padding:4px 10px;background:rgba(255,255,255,.95);color:#222;border-radius:999px;font:12px/1.5 sans-serif;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none'
+      bubble.style.cssText = 'position:absolute;left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:8px;padding:4px 10px;background:rgba(255,255,255,.95);color:#222;border-radius:14px;font:12px/1.5 sans-serif;max-width:min(420px,calc(100vw - 16px));width:max-content;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;opacity:0;transition:opacity .2s;pointer-events:none'
       box.appendChild(bubble)
 
       // 窗口缩放后视口边界变化：重新按视口上限适配尺寸，并重新钳制位置（spec §4）。

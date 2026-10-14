@@ -363,6 +363,7 @@ describe("pet overlay display lifecycle", () => {
     document.head.querySelectorAll('script[src^="https://plugin-assets.test/"]').forEach((script) => script.remove());
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
 
@@ -557,6 +558,67 @@ describe("pet overlay display lifecycle", () => {
     expect(h.manager.state.currentGroup).toBe("Thinking");
     expect(h.value("真实状态")).toBe("thinking");
     expect(h.value("当前动作")).toBe("Thinking[0]");
+  });
+
+  it("keeps the selected scripted work variant through loops and a cold tap", async () => {
+    const h = await mountMotionPet(["Idle", "Working", "TapHead"], { thinking: ["Working"] });
+    h.manager.definitions.Working = [0, 1].map((index) => ({ file: `work-${index}.mtn`, CCGUI: { Loop: true } }));
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.99);
+    await h.click("thinking");
+    expect(h.manager.state.currentIndex).toBe(1);
+    random.mockReturnValue(0);
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Working");
+    expect(h.manager.state.currentIndex).toBe(1);
+
+    const cold = h.manager.hold("TapHead");
+    await h.tap();
+    await act(async () => { h.manager.frame(); });
+    expect(h.manager.state.reservedGroup).toBe("TapHead");
+    await act(async () => { cold.resolve(); });
+    expect(h.manager.state.currentGroup).toBe("TapHead");
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Working");
+    expect(h.manager.state.currentIndex).toBe(1);
+  });
+
+  it("loops lyric cues in order, pauses for touch, and ignores stage replay while singing", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const h = await mountMotionPet(["Idle", "Working", "TapHead", "Waiting"], { thinking: ["Working"] });
+    h.manager.definitions.Working = [{ file: "work.mtn", CCGUI: {
+      Loop: true,
+      Lyrics: { Duration: 6, Cues: [
+        { Time: 0, Text: "Let me go~" },
+        { Time: 2, Text: "I'm making the calls~" },
+        { Time: 4, Text: "Let me write the JSON~" },
+      ] },
+    } }];
+    const line = () => h.modelCanvas()!.parentElement!.querySelector("div")!.textContent;
+    const advance = async (milliseconds: number) => {
+      await act(async () => { vi.advanceTimersByTime(milliseconds); h.frame(); });
+    };
+    await h.click("thinking");
+    expect(line()).toBe("Let me go~");
+    await advance(2100);
+    expect(line()).toBe("I'm making the calls~");
+    await h.tap();
+    await advance(10_000);
+    expect(h.manager.state.currentGroup).toBe("TapHead");
+    await act(async () => { h.manager.finish(); });
+    expect(line()).toBe("I'm making the calls~");
+    await advance(2000);
+    expect(line()).toBe("Let me write the JSON~");
+    await act(async () => { h.manager.finish(); });
+    await advance(2000);
+    expect(line()).toBe("Let me go~");
+    expect(h.manager.state.currentGroup).toBe("Working");
+
+    await h.tap();
+    await h.click("waiting");
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Idle");
+    await advance(2500);
+    expect(line()).not.toBe("Let me go~");
   });
 
   it("keeps real state, demo state and native playback separate through an interaction", async () => {

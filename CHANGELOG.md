@@ -8,6 +8,8 @@
   persisted separately from the pet coordinates, survives reopening and reloads,
   and stays within the viewport when the window or panel content changes size.
 - Add an explicit **Exit demo** control; closing diagnostics also cancels demo overrides and resumes the real session state.
+- Support model-authored `CCGUI.Loop` and timed `CCGUI.Lyrics` on motion entries. Lyrics cycle in order, pause during interaction/render suspension, and resume with the same motion variant after a click.
+- Wrap long dialogue within the viewport instead of allowing lyric lines to overflow the window.
 
 ### Changed
 
