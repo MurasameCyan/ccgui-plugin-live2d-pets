@@ -1071,7 +1071,7 @@ describe("pet overlay display lifecycle", () => {
 
     expect(event.defaultPrevented).toBe(true);
     const menu = anchor.querySelector('[role="menu"]')!;
-    expect([...menu.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["刷新宠物", "关闭宠物"]);
+    expect([...menu.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["刷新宠物", "关闭宠物", "打开调试菜单"]);
 
     await act(async () => { (menu.querySelector("button") as HTMLButtonElement).click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -1087,6 +1087,38 @@ describe("pet overlay display lifecycle", () => {
     expect(anchor.querySelector('[role="menu"]')).toBeNull();
   });
 
+
+  it("opens and closes the debug panel from the model context menu", async () => {
+    const { runtime, anchor, modelCanvas } = await mountPet();
+    const openMenu = (): HTMLElement => {
+      modelCanvas()!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 80, button: 2 }));
+      return anchor.querySelector('[role="menu"]')!;
+    };
+    const debugPanel = () => [...anchor.querySelectorAll("div")].find((node) => node.textContent === "调试面板") ?? null;
+    const item = (menu: HTMLElement, label: string) =>
+      [...menu.querySelectorAll("button")].find((button) => button.textContent === label)!;
+
+    // Developer options start off, so the panel is closed and the item offers to open it.
+    expect(runtime.snapshot().config.developerMode).toBe(false);
+    expect(debugPanel()).toBeNull();
+
+    await act(async () => { item(openMenu(), "打开调试菜单").click(); });
+    await act(async () => { await Promise.resolve(); });
+    // Opening from the menu must also raise the master switch, otherwise the
+    // panel stays gated and the item looks broken.
+    expect(runtime.snapshot().config.developerMode).toBe(true);
+    expect(runtime.snapshot().config.debug).toBe(true);
+    expect(debugPanel(), "debug panel after opening").not.toBeNull();
+
+    // The label now reflects the panel being open.
+    await act(async () => { item(openMenu(), "关闭调试菜单").click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(runtime.snapshot().config.debug).toBe(false);
+    expect(debugPanel()).toBeNull();
+    // Closing only closes the panel; the master switch the user may have set
+    // in settings is left alone.
+    expect(runtime.snapshot().config.developerMode).toBe(true);
+  });
 
 
   it("lets pointer input through where the model has no pixels", async () => {

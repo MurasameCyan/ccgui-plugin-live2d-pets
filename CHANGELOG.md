@@ -10,6 +10,9 @@
 - Add an explicit **Exit demo** control; closing diagnostics also cancels demo overrides and resumes the real session state.
 - Support model-authored `CCGUI.Loop` and timed `CCGUI.Lyrics` on motion entries. Lyrics cycle in order, pause during interaction/render suspension, and resume with the same motion variant after a click.
 - Wrap long dialogue within the viewport instead of allowing lyric lines to overflow the window.
+- Right-click the pet to open or close the debug panel. The item reflects the
+  current state; opening it also raises the developer master switch, since the
+  panel is gated on both, and closing it leaves that switch untouched.
 
 ### Changed
 

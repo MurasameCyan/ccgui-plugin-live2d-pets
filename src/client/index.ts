@@ -1542,14 +1542,29 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       closeContextMenu()
       void runtime.setSettings([{ op: 'set', path: ['enabled'], value: false }]).catch(() => {})
     })
-    const menuWidth = 148
-    const menuHeight = 76
-    const padding = 8
-    const left = Math.min(Math.max(padding, clientX), Math.max(padding, window.innerWidth - menuWidth - padding))
-    const top = Math.min(Math.max(padding, clientY), Math.max(padding, window.innerHeight - menuHeight - padding))
-    menu.style.left = `${left}px`
-    menu.style.top = `${top}px`
+    // 调试面板的门控是 developerMode && debug：只翻 debug 的话，开发者总开关关着时
+    // 这一项按了没有反应。从菜单打开就一并打开总开关；关闭只关面板、不动总开关，
+    // 免得把用户自己在设置页开的开发者选项一并关掉。
+    const debugShown = !!(view?.config.developerMode && view?.config.debug)
+    addItem(debugShown ? '关闭调试菜单' : '打开调试菜单', () => {
+      closeContextMenu()
+      const patch = debugShown
+        ? [{ op: 'set' as const, path: ['debug'], value: false }]
+        : [
+            { op: 'set' as const, path: ['developerMode'], value: true },
+            { op: 'set' as const, path: ['debug'], value: true },
+          ]
+      void runtime.setSettings(patch).catch(() => {})
+    })
+    // 尺寸从实际布局量：菜单项数量变化后，写死的常量会让贴边钳位算错。
+    menu.style.visibility = 'hidden'
     box.appendChild(menu)
+    const menuWidth = menu.offsetWidth
+    const menuHeight = menu.offsetHeight
+    const padding = 8
+    menu.style.left = `${Math.min(Math.max(padding, clientX), Math.max(padding, window.innerWidth - menuWidth - padding))}px`
+    menu.style.top = `${Math.min(Math.max(padding, clientY), Math.max(padding, window.innerHeight - menuHeight - padding))}px`
+    menu.style.visibility = ''
     contextMenu = menu
     document.addEventListener('pointerdown', dismissContextMenu, true)
     document.addEventListener('keydown', dismissContextMenuOnEscape, true)
