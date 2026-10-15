@@ -85,8 +85,9 @@ interface ModelLike {
       getDrawableCount?(): number
       getDrawableVertices?(index: number): ArrayLike<number>
       getDrawableOpacity?(index: number): number
+      getDrawOpacity?(index: number): number
     }
-    hitAreas?: Record<string, unknown>
+    hitAreas?: Record<string, { index?: number }>
     focusController?: { focus(x: number, y: number, instant?: boolean): void }
     motionManager?: {
       on?(event: "motionStart", listener: (group: string, index: number) => void): unknown
@@ -1960,7 +1961,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       const localX = e.clientX - rect.left
       const localY = e.clientY - rect.top
       // hitTest(x, y) 吃画布世界坐标（库内部做模型空间转换），返回命中的区域名数组
-      const hits = model.hitTest(localX, localY)
+      const internal = model.internalModel
+      const core = internal?.coreModel
+      const opacity = core?.getDrawableOpacity ?? core?.getDrawOpacity
+      // Vendors retain hit rectangles for hidden pose layers; only visible regions may win priority.
+      const hits = model.hitTest(localX, localY).filter((name) => {
+        const index = internal?.hitAreas?.[name]?.index
+        return !opacity || index === undefined || opacity.call(core, index) > 0
+      })
       let bounds: { x: number; y: number; width: number; height: number } | null = null
       try {
         const b = model.getBounds?.()

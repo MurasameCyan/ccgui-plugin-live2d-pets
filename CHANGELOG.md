@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Ignore fully transparent drawable hit areas before choosing a clicked body part, so hidden pose variants cannot steal clicks from the visible head, arms, body or legs.
 - Package the manifest icon at its declared repo-relative path. A marketplace
   install materializes the index artwork there, but a local directory install
   has no such step, so the shipped icon was unreachable and the plugin fell

@@ -62,7 +62,7 @@ function makeModel(manager?: MotionManager) {
         // The real adapters expose these as prototype methods that read `this`;
         // keep the fixture `this`-dependent so unbound captures fail here too.
         getDrawableVertices() { return this.drawables.vertices; },
-        getDrawableOpacity() { return this.drawables.opacities[0]!; },
+        getDrawableOpacity(index = 0) { return this.drawables.opacities[index]!; },
       },
       hitAreas: { Head: {} },
       focusController: { focus: vi.fn() },
@@ -519,6 +519,27 @@ describe("pet overlay display lifecycle", () => {
     expect(model.motion).toHaveBeenCalledWith("tap_body", undefined, 3);
   });
 
+
+  it.each(["getDrawableOpacity", "getDrawOpacity"] as const)("routes overlapping hits using current drawable visibility through %s", async (getter) => {
+    const h = await mountMotionPet(["Idle", "TapHead", "TapArm"]);
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.model.hitTest = () => ["Head", "Arm"];
+    Object.assign(h.model.internalModel.hitAreas, { Head: { index: 0 }, Arm: { index: 1 } });
+    h.model.internalModel.coreModel.drawables.opacities = new Float32Array([0, 1]);
+    if (getter === "getDrawOpacity") {
+      Object.assign(h.model.internalModel.coreModel, {
+        getDrawOpacity: h.model.internalModel.coreModel.getDrawableOpacity,
+        getDrawableOpacity: undefined,
+      });
+    }
+    await h.tap();
+    expect(h.manager.state.currentGroup).toBe("TapArm");
+    await act(async () => { h.manager.finish(); });
+    h.model.internalModel.coreModel.drawables.opacities.set([1, 0]);
+    now.mockReturnValue(1100);
+    await h.tap();
+    expect(h.manager.state.currentGroup).toBe("TapHead");
+  });
 
   it("preserves a cold interaction reservation across the stopped idle's finish event", async () => {
     const h = await mountMotionPet(["Idle", "TapHead"]);

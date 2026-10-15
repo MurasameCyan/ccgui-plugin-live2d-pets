@@ -51,6 +51,8 @@ bun run validate
 
 Model authors can add `CCGUI: { Loop: true, Lyrics: { Duration: 8, Cues: [{ Time: 0, Text: "First line" }, { Time: 4, Text: "Next line" }] } }` to an entry in `FileReferences.Motions`. Times are seconds, starting at zero and increasing within `Duration`. Lyrics loop in order. Natural completion and touch recovery retain the selected group and index; touch and rendering pauses also pause the lyric clock. A new state or Exit demo cancels the old performance. Ordinary models are unchanged, and this metadata does not generate audio.
 
+Hit areas on fully transparent pose layers do not participate in body-part selection. Their current opacity is checked at each click, so a newly visible pose becomes interactive without reloading the model.
+
 
 ## Storage
 
