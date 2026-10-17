@@ -33,6 +33,59 @@ describe("PetRuntime", () => {
     runtime.dispose();
   });
 
+  it("publishes a stable turn identity and emits same-state replacement turns", async () => {
+    const h = makeContext();
+    const runtime = new PetRuntime(h.ctx);
+    try {
+      await runtime.ready;
+      const changed = vi.fn();
+      runtime.subscribe(changed);
+      h.getTurnHooks()?.onTurnStarted?.({ ...turnEvent(), sessionId: null });
+      const first = runtime.snapshot().turn;
+      expect(first).toEqual({ engine: "codex", turnId: "turn-1" });
+      h.getSessionHooks()?.onCreated?.(turnEvent());
+      h.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      expect(runtime.snapshot().turn).toBe(first);
+      expect(changed).toHaveBeenCalledTimes(1);
+      await runtime.setSettings([{ op: "set", path: ["size"], value: 180 }]);
+      expect(runtime.snapshot().turn).toBe(first);
+
+      changed.mockClear();
+      h.getTurnHooks()?.onTurnStarted?.({ ...turnEvent(), turnId: "turn-2" });
+      expect(runtime.snapshot().state).toBe("thinking");
+      expect(runtime.snapshot().turn).not.toBe(first);
+      expect(changed).toHaveBeenCalledTimes(1);
+      h.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      h.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      expect(runtime.snapshot().turn?.turnId).toBe("turn-2");
+      expect(runtime.snapshot().state).toBe("thinking");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("does not let a duplicate start preempt waiting or completion", async () => {
+    vi.useFakeTimers();
+    const h = makeContext();
+    const runtime = new PetRuntime(h.ctx);
+    try {
+      await runtime.ready;
+      h.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      h.getTurnHooks()?.onRuntimeEvent?.(runtimeEvent("permission-requested"));
+      h.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      expect(runtime.snapshot().state).toBe("waiting");
+      h.getTurnHooks()?.afterTurn?.({ ...turnEvent(), status: "completed" });
+      h.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      expect(runtime.snapshot().state).toBe("done");
+      vi.advanceTimersByTime(3500);
+      expect(runtime.snapshot().turn).toBeNull();
+      h.getTurnHooks()?.onTurnStarted?.(turnEvent());
+      expect(runtime.snapshot().state).toBe("idle");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
   it("normalizes persisted settings before storing them", async () => {
     const harness = makeContext();
     const runtime = new PetRuntime(harness.ctx);

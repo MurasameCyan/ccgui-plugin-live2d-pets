@@ -24,6 +24,9 @@
 
 ### Fixed
 
+- Play one Thinking introduction per streaming turn, then keep one Working variant looping. Explicit thinking mappings and available groups determine the sequence; a failed Thinking load continues to the selected Working group, while Thinking-only/custom models retain their existing behavior.
+- Keep streaming progress through stage-copy timers, duplicate events, configuration refreshes, session switches, demos and previews. Touch interruption consumes the Thinking introduction or resumes the same Working variant and paused lyric clock; waiting and terminal states preempt stale recovery.
+- Publish a stable per-turn `{ engine, turnId }` identity so new same-state turns reset their sequence without losing hidden live turns. Ignore duplicate starts and retired-turn events. Native motion lifecycle events remain authoritative when concurrent cold loads settle their start promises out of order.
 - Ignore fully transparent drawable hit areas before choosing a clicked body part, so hidden pose variants cannot steal clicks from the visible head, arms, body or legs.
 - Package the manifest icon at its declared repo-relative path. A marketplace
   install materializes the index artwork there, but a local directory install

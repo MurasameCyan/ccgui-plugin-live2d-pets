@@ -62,6 +62,13 @@ interface ScriptedMotion {
   cueIndex: number
 }
 
+interface StreamingSequence {
+  thinking?: string
+  working: string
+  thinkingStarted: boolean
+  playback: ScriptedMotion | null
+}
+
 interface ModelLike {
   width: number
   height: number
@@ -441,6 +448,12 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let scriptedMotion: ScriptedMotion | null = null
   let demoState: PetState | null = null
   let view: PetStateView | null = null
+  let realTurn: PetStateView['turn'] = null
+  let realSequence: StreamingSequence | null = null
+  // Runtime retains each identity only while its turn is live; hidden sessions
+  // keep playback progress without an unbounded client-side turn registry.
+  let streamingByTurn = new WeakMap<NonNullable<PetStateView['turn']>, StreamingSequence>()
+  let demoSequence: StreamingSequence | null = null
   let pos: DisplayLike = { right: 24, bottom: 20, size: 160 }
   // 帧率档（settings maxFps → ticker.maxFPS；0 = 不限制）
   let maxFps = DEFAULT_MAX_FPS
@@ -595,10 +608,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       stageTimers.push(window.setTimeout(() => {
         stageIndex = i
         // 拖拽中暂停气泡与动作（spec §4），阶段静默推进、松手后恢复新阶段
-        if (!dragging && !scriptedMotion && !(lastMotionRequest?.kind === 'interaction'
+        if (!dragging && !scriptedMotion?.script.lyrics && !(lastMotionRequest?.kind === 'interaction'
           && (lastMotionRequest.phase === 'pending' || lastMotionRequest.phase === 'playing'))) {
           showStageText()
-          playState(state)
+          if (!scriptedMotion && (state !== 'thinking' || !(demoState === null ? realSequence : demoSequence))) playState(state)
         }
       }, delays[i]))
     }
@@ -634,16 +647,28 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         const j = Math.floor(Math.random() * (i + 1))
         ;[names[i], names[j]] = [names[j], names[i]]
       }
-      // 配置的动作组全部失败时，仍回退到默认候选，避免模型/配置变化后完全无动作。
-      const defaults = DEFAULT_MOTION_MAP[slot] ?? []
-      for (const name of defaults) {
-        if (!names.includes(name)) names.push(name)
+      // Streaming overrides are authoritative: never add an unselected Thinking/Working.
+      if (slot !== 'thinking') {
+        const defaults = DEFAULT_MOTION_MAP[slot] ?? []
+        for (const name of defaults) {
+          if (!names.includes(name)) names.push(name)
+        }
       }
     } else {
       names = [...(DEFAULT_MOTION_MAP[slot] ?? [])]
     }
     const nativeGroups = Object.keys(model?.internalModel?.motionManager?.definitions ?? {})
     return resolveMotionNames(names, nativeGroups)
+  }
+
+  function createStreamingSequence(): StreamingSequence | null {
+    const definitions = model?.internalModel?.motionManager?.definitions ?? {}
+    const groups = Object.keys(definitions).filter((group) => Array.isArray(definitions[group]) && definitions[group].length > 0)
+    const configured = motionMap.thinking?.length ? motionMap.thinking : DEFAULT_MOTION_MAP.thinking
+    const eligible = resolveMotionNames(configured ?? [], groups).filter((group) => groups.includes(group))
+    const [thinking, working] = resolveMotionNames(['Thinking', 'Working'], groups)
+    if (!working || !eligible.includes(working)) return null
+    return { thinking: thinking && eligible.includes(thinking) ? thinking : undefined, working, thinkingStarted: false, playback: null }
   }
 
   function pauseScriptedMotion(): void {
@@ -725,16 +750,46 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         if (request.seq !== motionSeq || model !== currentModel) return false
         request.results.push(`${name}=throw(${error instanceof Error ? error.message : String(error)})`)
       }
+      // A concurrent native load can fulfill this request's reservation even
+      // when this invocation returns false. Its observed lifecycle wins.
+      if (request.phase !== 'pending') return true
     }
     request.phase = 'failed'
     releaseFocusSuppression()
     renderDebugText()
-    if (options.kind === 'interaction' && scriptedMotion) resumeScriptedMotion()
+    if (options.kind === 'interaction' && lastState === 'thinking'
+      && (demoState === null ? realSequence : demoSequence) && scriptedMotion?.kind !== 'preview') playState('thinking')
+    else if (options.kind === 'interaction' && scriptedMotion) resumeScriptedMotion()
     else if (options.resume) { scriptedMotion = null; showStageText() }
     return false
   }
 
   function playState(state: PetState): void {
+    if (state === 'thinking' && model) {
+      let sequence = demoState === null ? realSequence : demoSequence
+      if (!sequence) {
+        sequence = createStreamingSequence()
+        if (demoState === null) {
+          realSequence = sequence
+          if (realTurn && sequence) streamingByTurn.set(realTurn, sequence)
+        }
+        else demoSequence = sequence
+      }
+      if (sequence) {
+        if (sequence.playback) {
+          scriptedMotion = sequence.playback
+          resumeScriptedMotion()
+        } else {
+          const names = !sequence.thinkingStarted && sequence.thinking
+            ? [sequence.thinking, sequence.working] : [sequence.working]
+          sequence.thinkingStarted = true
+          void startMotionWithPriority(names, MotionPriority.FORCE, {
+            suppressFocus: true, kind: 'state', slot: state,
+          })
+        }
+        return
+      }
+    }
     const priority = state === 'idle' ? MotionPriority.IDLE : MotionPriority.FORCE
     void startMotionWithPriority(motionNamesFor(state), priority, {
       suppressFocus: state !== 'idle', kind: 'state', slot: state,
@@ -751,10 +806,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (request && request.kind !== 'interaction') {
       if (!request.resume) {
         const definitions = model?.internalModel?.motionManager?.definitions?.[group]
-        const script = motionPlaybackScript(Array.isArray(definitions) ? definitions[index] : null)
+        let script = motionPlaybackScript(Array.isArray(definitions) ? definitions[index] : null)
+        const sequence = request.kind === 'state' && request.slot === 'thinking'
+          ? (demoState === null ? realSequence : demoSequence) : null
+        if (sequence) script = { ...script, loop: group === sequence.working }
         scriptedMotion = script ? {
           group, index, kind: request.kind, slot: request.slot, script, elapsedMs: 0, tickAt: null, cueIndex: -1,
         } : null
+        if (sequence && group === sequence.working) sequence.playback = scriptedMotion
       }
       if (scriptedMotion) {
         scriptedMotion.cueIndex = -1
@@ -776,6 +835,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       queueMicrotask(() => {
         if (disposed || request.seq !== motionSeq || request !== lastMotionRequest) return
         releaseFocusSuppression()
+        if (lastState === 'thinking' && (demoState === null ? realSequence : demoSequence)
+          && (request.kind === 'state' || (request.kind === 'interaction' && scriptedMotion?.kind !== 'preview'))) {
+          playState('thinking')
+          return
+        }
         if (scriptedMotion && (request.kind === 'interaction' || scriptedMotion.script.loop)) {
           resumeScriptedMotion()
           return
@@ -796,6 +860,14 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
 
   function applyState(next: PetStateView | null): void {
     const state = demoState ?? next?.state ?? 'idle'
+    const turn = next?.turn ?? null
+    const newTurn = turn?.engine !== realTurn?.engine || turn?.turnId !== realTurn?.turnId
+    if (newTurn) realSequence = turn ? streamingByTurn.get(turn) ?? null : null
+    if (next?.state !== 'thinking') {
+      if (turn) streamingByTurn.delete(turn)
+      realSequence = null
+    }
+    realTurn = turn
     // 人设热更新（spec §3）：persona 或自定义清单变化时重算台词表；
     // 若正处于长状态，当前阶段气泡立即换新语气重绘（不打断计时节奏）
     const personaId = next?.config.persona || DEFAULT_PERSONA_ID
@@ -814,10 +886,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     }
     // 状态变化时播状态气泡与状态动作（spec §3）：长状态（思考/等审批）走
     // 阶段演进常驻气泡，短状态气泡瞬态显示；点击互动另走 handleTap（可连点打断）。
-    // 动作只在状态变化（及长状态阶段推进）时触发；startMotionWithPriority 会先
-    // stopAllMotions 再按优先级启动，保证状态动作可立即切换、阶段可重播。
-    if (state !== lastState) {
+    // Real turn identity, not snapshot version or stage-copy timers, resets streaming playback.
+    if (state !== lastState || (demoState === null && newTurn)) {
       lastState = state
+      pauseScriptedMotion()
       scriptedMotion = null
       if (STAGED_DELAYS[state]) {
         enterStaged(state)
@@ -836,6 +908,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   function exitDemo(): void {
     if (demoState === null && lastMotionRequest?.kind !== 'preview') return
     demoState = null
+    demoSequence = null
     // 即使演示与真实状态相同，也要取消 pending/预览并重建真实状态的阶段计时。
     lastState = null
     applyState(view)
@@ -1254,6 +1327,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     lastMotionRequest = null
     currentMotion = null
     scriptedMotion = null
+    realSequence = null
+    streamingByTurn = new WeakMap()
+    demoSequence = null
     focusSuppressed = false
     lastPointerClient = null
     detachMotionEvents?.()
@@ -1813,10 +1889,11 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
         // 触发器语义：每次点击都重播该状态动作（同状态不再切回 null），
         // 便于「连点 7 次看是否每次都出动作」这类人工核对。
         btn.onclick = () => {
-          const replay = lastState === st
+          pauseScriptedMotion()
+          demoSequence = null
           demoState = st
+          lastState = null
           applyState(view)
-          if (replay) playState(st)
         }
         demoRow.appendChild(btn)
       }

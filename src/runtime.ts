@@ -31,6 +31,8 @@ export interface PetConfig {
 }
 export interface PetStateView {
   state: PetState;
+  /** Stable object across snapshots/session switches; released when its turn retires. */
+  turn: Readonly<{ engine: string; turnId: string }> | null;
   agent: string;
   config: PetConfig & {
     modelUrl: string | null;
@@ -82,6 +84,7 @@ interface TrackedTurn {
   workspacePath: string;
   /** 跟踪中的回合；到达终态后置空，避免迟到事件复活已结束的回合。 */
   turnId: string | null;
+  identity: PetStateView["turn"];
   state: PetState;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -126,6 +129,7 @@ export class PetRuntime {
   private config: PetConfig = { ...DEFAULT_CONFIG };
   private display: PetDisplay = { ...DEFAULT_DISPLAY };
   private state: PetState = "idle";
+  private turn: PetStateView["turn"] = null;
   private agent = "idle";
   /** 当前激活会话：只有它的回合驱动桌宠表现（spec §3）。 */
   private activeSession: SessionRef | null = null;
@@ -175,6 +179,12 @@ export class PetRuntime {
     };
     const turnHooks: TurnHooks = {
       onTurnStarted: (event) => {
+        if (this.retiredTurns.has(`${event.engine}\u0000${event.turnId}`)) return;
+        const tracked = this.turns.find((turn) => turn.engine === event.engine && turn.turnId === event.turnId);
+        if (tracked) {
+          this.adoptSessionId(tracked, event.sessionId);
+          return;
+        }
         const ref: SessionRef = { engine: event.engine, sessionId: event.sessionId, workspacePath: event.workspace.path };
         // 宿主未报告激活会话时跟随本回合；后台会话的回合只记录，不改当前表现。
         const active = this.activeSession;
@@ -260,6 +270,10 @@ export class PetRuntime {
   private upsertTurn(ref: SessionRef, turnId: string, state: PetState): TrackedTurn {
     const existing = this.findTurn(ref);
     if (existing) {
+      if (existing.turnId !== turnId) {
+        this.retireTurn(existing);
+        existing.identity = { engine: ref.engine, turnId };
+      }
       this.clearTurnTimer(existing);
       existing.turnId = turnId;
       existing.state = state;
@@ -271,6 +285,7 @@ export class PetRuntime {
       sessionId: ref.sessionId,
       workspacePath: ref.workspacePath ?? "",
       turnId,
+      identity: { engine: ref.engine, turnId },
       state,
     };
     // 不设数量上限：任何会话的回合都要保留到终态/会话关闭，切回时才能立刻恢复反馈。
@@ -287,6 +302,7 @@ export class PetRuntime {
 
   /** 记下回合 id 已结算；超出上限时按插入序淘汰最旧的一条。 */
   private retireTurn(turn: TrackedTurn): void {
+    turn.identity = null;
     if (!turn.turnId) return;
     const key = `${turn.engine}\u0000${turn.turnId}`;
     this.retiredTurns.delete(key);
@@ -314,7 +330,12 @@ export class PetRuntime {
 
   private refresh(): void {
     const next = this.presentedState();
-    if (next === this.state) return;
+    const tracked = this.activeSession ? this.findTurn(this.activeSession) : undefined;
+    const turnId = tracked?.turnId ?? null;
+    const sameTurn = turnId === (this.turn?.turnId ?? null)
+      && (!turnId || tracked?.engine === this.turn?.engine);
+    if (next === this.state && sameTurn) return;
+    if (!sameTurn) this.turn = tracked?.identity ?? null;
     this.state = next;
     this.version += 1;
     this.emit();
@@ -410,6 +431,7 @@ export class PetRuntime {
     }
     return {
       state: this.state,
+      turn: this.turn,
       agent: this.agent,
       config: {
         ...this.config,
