@@ -1,0 +1,412 @@
+{
+	"Version": 3,
+	"Parameters": [
+		{
+			"Id": "ParamAngleZ",
+			"GroupId": "",
+			"Name": "角度 Z"
+		},
+		{
+			"Id": "ParamEyeROpen",
+			"GroupId": "",
+			"Name": "右眼 开闭"
+		},
+		{
+			"Id": "ParamEyeBallX",
+			"GroupId": "",
+			"Name": "眼珠 X"
+		},
+		{
+			"Id": "ParamEyeBallY",
+			"GroupId": "",
+			"Name": "眼珠 Y"
+		},
+		{
+			"Id": "ParamBrowLY",
+			"GroupId": "",
+			"Name": "左眉 上下"
+		},
+		{
+			"Id": "ParamBrowRY",
+			"GroupId": "",
+			"Name": "右眉 上下"
+		},
+		{
+			"Id": "ParamMouthForm",
+			"GroupId": "",
+			"Name": "嘴 变形"
+		},
+		{
+			"Id": "ParamMouthOpenY",
+			"GroupId": "",
+			"Name": "嘴 开闭"
+		},
+		{
+			"Id": "ParamCheek",
+			"GroupId": "",
+			"Name": "脸颊泛红"
+		},
+		{
+			"Id": "ParamBodyAngleZ",
+			"GroupId": "",
+			"Name": "身体旋转 Z"
+		},
+		{
+			"Id": "ParamBreath",
+			"GroupId": "",
+			"Name": "呼吸"
+		},
+		{
+			"Id": "ParamHairFront",
+			"GroupId": "",
+			"Name": "摇动 前发"
+		},
+		{
+			"Id": "ParamTailSwing",
+			"GroupId": "",
+			"Name": "tail_swing"
+		},
+		{
+			"Id": "ParamTailFollow",
+			"GroupId": "",
+			"Name": "tail_follow"
+		},
+		{
+			"Id": "ParamHairBackL",
+			"GroupId": "",
+			"Name": "hair_back_l"
+		},
+		{
+			"Id": "ParamHairBackR",
+			"GroupId": "",
+			"Name": "hair_back_r"
+		},
+		{
+			"Id": "ParamHairSideL",
+			"GroupId": "",
+			"Name": "hair_side_l"
+		},
+		{
+			"Id": "ParamHairSideR",
+			"GroupId": "",
+			"Name": "hair_side_r"
+		},
+		{
+			"Id": "ParamHairAhoge",
+			"GroupId": "",
+			"Name": "ahoge"
+		},
+		{
+			"Id": "ParamEarL",
+			"GroupId": "",
+			"Name": "ear_l"
+		},
+		{
+			"Id": "ParamEarR",
+			"GroupId": "",
+			"Name": "ear_r"
+		},
+		{
+			"Id": "ParamHairBow",
+			"GroupId": "",
+			"Name": "hairbow"
+		},
+		{
+			"Id": "ParamSkirt",
+			"GroupId": "",
+			"Name": "skirt"
+		},
+		{
+			"Id": "ParamApron",
+			"GroupId": "",
+			"Name": "apron"
+		},
+		{
+			"Id": "ParamArmL",
+			"GroupId": "",
+			"Name": "arm_l"
+		},
+		{
+			"Id": "ParamWristL",
+			"GroupId": "",
+			"Name": "wrist_l"
+		},
+		{
+			"Id": "ParamArmR",
+			"GroupId": "",
+			"Name": "arm_r"
+		},
+		{
+			"Id": "ParamWristR",
+			"GroupId": "",
+			"Name": "grip_r"
+		},
+		{
+			"Id": "ParamLegL",
+			"GroupId": "",
+			"Name": "leg_l"
+		},
+		{
+			"Id": "ParamLegR",
+			"GroupId": "",
+			"Name": "leg_r"
+		},
+		{
+			"Id": "ParamEyeLOpen",
+			"GroupId": "",
+			"Name": "左眼 开闭"
+		},
+		{
+			"Id": "ParamCelebrate",
+			"GroupId": "",
+			"Name": "完成庆祝"
+		},
+		{
+			"Id": "ParamJumpY",
+			"GroupId": "",
+			"Name": "jump_y"
+		},
+		{
+			"Id": "ParamEarPoseL",
+			"GroupId": "",
+			"Name": "左鳍耳主动"
+		},
+		{
+			"Id": "ParamEarPoseR",
+			"GroupId": "",
+			"Name": "右鳍耳主动"
+		},
+		{
+			"Id": "ParamThinking",
+			"GroupId": "",
+			"Name": "思考姿势"
+		},
+		{
+			"Id": "ParamThinkQuestion",
+			"GroupId": "",
+			"Name": "思考问号浮动"
+		},
+		{
+			"Id": "ParamThinkHandL",
+			"GroupId": "",
+			"Name": "思考左手"
+		},
+		{
+			"Id": "ParamThinkHandR",
+			"GroupId": "",
+			"Name": "思考右手"
+		},
+		{
+			"Id": "ParamSingSway",
+			"GroupId": "",
+			"Name": "Singing Sway"
+		},
+		{
+			"Id": "ParamSingHead",
+			"GroupId": "",
+			"Name": "Singing Head"
+		},
+		{
+			"Id": "ParamSingArmL",
+			"GroupId": "",
+			"Name": "Singing ArmL"
+		},
+		{
+			"Id": "ParamSingArmR",
+			"GroupId": "",
+			"Name": "Singing ArmR"
+		},
+		{
+			"Id": "ParamSingHandL",
+			"GroupId": "",
+			"Name": "Singing HandL"
+		},
+		{
+			"Id": "ParamSingHandR",
+			"GroupId": "",
+			"Name": "Singing HandR"
+		},
+		{
+			"Id": "ParamSingHair",
+			"GroupId": "",
+			"Name": "Singing Hair"
+		},
+		{
+			"Id": "ParamSingAhoge",
+			"GroupId": "",
+			"Name": "Singing Ahoge"
+		},
+		{
+			"Id": "ParamSingTail",
+			"GroupId": "",
+			"Name": "Singing Tail"
+		},
+		{
+			"Id": "ParamSingStepL",
+			"GroupId": "",
+			"Name": "Singing StepL"
+		},
+		{
+			"Id": "ParamSingStepR",
+			"GroupId": "",
+			"Name": "Singing StepR"
+		},
+		{
+			"Id": "ParamSingBreath",
+			"GroupId": "",
+			"Name": "Singing breath"
+		},
+		{
+			"Id": "ParamSingMouth",
+			"GroupId": "",
+			"Name": "Singing mouth"
+		},
+		{
+			"Id": "ParamSingEyeOpen",
+			"GroupId": "",
+			"Name": "Singing eyes"
+		},
+		{
+			"Id": "ParamSingNoteA",
+			"GroupId": "",
+			"Name": "Note A"
+		},
+		{
+			"Id": "ParamSingNoteFloatA",
+			"GroupId": "",
+			"Name": "Note float A"
+		},
+		{
+			"Id": "ParamSingNoteB",
+			"GroupId": "",
+			"Name": "Note B"
+		},
+		{
+			"Id": "ParamSingNoteFloatB",
+			"GroupId": "",
+			"Name": "Note float B"
+		},
+		{
+			"Id": "ParamSingNoteC",
+			"GroupId": "",
+			"Name": "Note C"
+		},
+		{
+			"Id": "ParamSingNoteFloatC",
+			"GroupId": "",
+			"Name": "Note float C"
+		},
+		{
+			"Id": "ParamWorkSit",
+			"GroupId": "",
+			"Name": "Work Sit"
+		},
+		{
+			"Id": "ParamWorkDance",
+			"GroupId": "",
+			"Name": "Work Dance"
+		},
+		{
+			"Id": "ParamV3ArmPose",
+			"GroupId": "",
+			"Name": "V3 ArmPose"
+		},
+		{
+			"Id": "ParamV3EyeSpecial",
+			"GroupId": "",
+			"Name": "V3 EyeSpecial"
+		},
+		{
+			"Id": "ParamV3MouthSpecial",
+			"GroupId": "",
+			"Name": "V3 MouthSpecial"
+		},
+		{
+			"Id": "ParamV3HeadTilt",
+			"GroupId": "",
+			"Name": "V3 head pose angle"
+		},
+		{
+			"Id": "ParamV3BodyTilt",
+			"GroupId": "",
+			"Name": "V3 body pose angle"
+		},
+		{
+			"Id": "ParamV3StateAccent",
+			"GroupId": "",
+			"Name": "V3 state accent"
+		},
+		{
+			"Id": "ParamV3ThinkB",
+			"GroupId": "",
+			"Name": "V3 thinking b"
+		},
+		{
+			"Id": "ParamV3ErrorA",
+			"GroupId": "",
+			"Name": "V3 error error_a"
+		},
+		{
+			"Id": "ParamV3ErrorB",
+			"GroupId": "",
+			"Name": "V3 error error_b"
+		},
+		{
+			"Id": "ParamV3Done",
+			"GroupId": "",
+			"Name": "V3 done confident"
+		},
+		{
+			"Id": "ParamV3Wait",
+			"GroupId": "",
+			"Name": "V3 waiting wait"
+		}
+	],
+	"ParameterGroups": [],
+	"Parts": [
+		{
+			"Id": "Part11",
+			"Name": "feedback.psd"
+		},
+		{
+			"Id": "Part10",
+			"Name": "feedback.psd"
+		},
+		{
+			"Id": "Part7",
+			"Name": "feedback.psd"
+		},
+		{
+			"Id": "Part6",
+			"Name": "feedback.psd"
+		},
+		{
+			"Id": "Part5",
+			"Name": "source.psd"
+		},
+		{
+			"Id": "Part4",
+			"Name": "source.psd"
+		},
+		{
+			"Id": "Part3",
+			"Name": "source.psd"
+		},
+		{
+			"Id": "Part2",
+			"Name": "source.psd"
+		},
+		{
+			"Id": "Part",
+			"Name": "source.psd"
+		},
+		{
+			"Id": "Part9",
+			"Name": "sing-dance.psd"
+		},
+		{
+			"Id": "Part8",
+			"Name": "sing-sit.psd"
+		}
+	]
+}

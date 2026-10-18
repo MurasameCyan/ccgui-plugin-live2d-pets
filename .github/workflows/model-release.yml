@@ -1,0 +1,82 @@
+name: Publish runtime model
+
+on:
+  push:
+    branches: [models]
+    paths:
+      - 'ds-h-v3/**'
+      - '.github/workflows/model-release.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: model-runtime-release
+  cancel-in-progress: false
+
+env:
+  MODEL_RELEASE: model-ds-h-v3-20261018
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate and archive runtime files only
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile, ZIP_DEFLATED
+
+          root = Path('ds-h-v3')
+          entry = 'ds-h-v3.model3.json'
+          if root.is_symlink() or any(p.is_symlink() for p in root.rglob('*')):
+              raise SystemExit('Runtime assets must not contain symlinks')
+          model = json.loads((root / entry).read_text(encoding='utf-8'))
+          refs = model['FileReferences']
+          if set(refs) != {'Moc', 'Textures', 'Physics', 'DisplayInfo', 'Motions'}:
+              raise SystemExit('Review the changed model file-reference schema before publishing')
+          expected = {entry, refs['Moc'], refs['Physics'], refs['DisplayInfo'], *refs['Textures']}
+          expected.update(motion['File'] for group in refs['Motions'].values() for motion in group)
+          suffixes = ('.model3.json', '.moc3', '.png', '.physics3.json', '.cdi3.json', '.motion3.json')
+          for name in expected:
+              path = PurePosixPath(name)
+              if path.is_absolute() or '..' in path.parts or ':' in name or '\\' in name:
+                  raise SystemExit(f'Non-local runtime reference: {name}')
+              if not name.endswith(suffixes):
+                  raise SystemExit(f'Non-runtime file type: {name}')
+          actual = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()}
+          if actual != expected:
+              raise SystemExit(f'Missing: {sorted(expected - actual)}; unreferenced: {sorted(actual - expected)}')
+
+          output = Path('release')
+          output.mkdir()
+          archive = output / 'ds-h-v3-runtime.zip'
+          with ZipFile(archive, 'x', compression=ZIP_DEFLATED, compresslevel=9) as package:
+              for name in sorted(expected):
+                  package.write(root / name, f'ds-h-v3/{name}')
+          with archive.open('rb') as stream:
+              digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+          checksum = f'{digest}  {archive.name}\n'
+          (output / 'ds-h-v3-runtime.sha256').write_text(checksum, encoding='utf-8')
+          print(f'{len(expected)} runtime files; {sum((root / name).stat().st_size for name in expected)} uncompressed bytes')
+          print(f'{archive.stat().st_size} ZIP bytes')
+          print(checksum, end='')
+          PY
+
+      - name: Publish a separate model release without changing plugin latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$MODEL_RELEASE" \
+            release/ds-h-v3-runtime.zip \
+            release/ds-h-v3-runtime.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "ds-h-v3 runtime model (2026-10-18)" \
+            --notes-file README.md \
+            --latest=false

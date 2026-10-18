@@ -1,0 +1,941 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "ds-h-v3.moc3",
+    "Textures": [
+      "ds-h-v3.4096/texture_00.png",
+      "ds-h-v3.4096/texture_01.png",
+      "ds-h-v3.4096/texture_02.png",
+      "ds-h-v3.4096/texture_03.png",
+      "ds-h-v3.4096/texture_04.png",
+      "ds-h-v3.4096/texture_05.png",
+      "ds-h-v3.4096/texture_06.png",
+      "ds-h-v3.4096/texture_07.png",
+      "ds-h-v3.4096/texture_08.png",
+      "ds-h-v3.4096/texture_09.png",
+      "ds-h-v3.4096/texture_10.png",
+      "ds-h-v3.4096/texture_11.png"
+    ],
+    "Physics": "ds-h-v3.physics3.json",
+    "DisplayInfo": "ds-h-v3.cdi3.json",
+    "Motions": {
+      "Idle": [
+        {
+          "File": "motions/v3-idle.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "Thinking": [
+        {
+          "File": "motions/v3-thinking-2.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3,
+          "CCGUI": {
+            "Loop": true
+          }
+        }
+      ],
+      "Waiting": [
+        {
+          "File": "motions/v3-waiting.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3,
+          "CCGUI": {
+            "Loop": true
+          }
+        }
+      ],
+      "Done": [
+        {
+          "File": "motions/v3-done.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "Failed": [
+        {
+          "File": "motions/v3-failed-1.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        },
+        {
+          "File": "motions/v3-failed-2.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "TapHead": [
+        {
+          "File": "motions/v3-tap-head.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "TapBody": [
+        {
+          "File": "motions/v3-tap-body.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "TapArm": [
+        {
+          "File": "motions/v3-tap-arm.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "TapLeg": [
+        {
+          "File": "motions/v3-tap-leg.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "TapJump": [
+        {
+          "File": "motions/v3-tap-jump-1.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        },
+        {
+          "File": "motions/v3-tap-jump-2.motion3.json",
+          "FadeInTime": 0.25,
+          "FadeOutTime": 0.3
+        }
+      ],
+      "Working": [
+        {
+          "File": "motions/work-sing-sit.motion3.json",
+          "FadeInTime": 0.22,
+          "FadeOutTime": 0,
+          "CCGUI": {
+            "Loop": true,
+            "Lyrics": {
+              "Duration": 204,
+              "Cues": [
+                {
+                  "Time": 0,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 4,
+                  "Text": "I'm making the call"
+                },
+                {
+                  "Time": 8,
+                  "Text": "let me write the Json"
+                },
+                {
+                  "Time": 10,
+                  "Text": "I'll call the tool"
+                },
+                {
+                  "Time": 12,
+                  "Text": "let me do it okay"
+                },
+                {
+                  "Time": 15,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 19,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 23,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 27,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 31,
+                  "Text": "The moonlight hits my screen~"
+                },
+                {
+                  "Time": 33,
+                  "Text": "the world is fast asleep~"
+                },
+                {
+                  "Time": 35,
+                  "Text": "A million lines of code~"
+                },
+                {
+                  "Time": 37,
+                  "Text": "a promise I must keep~"
+                },
+                {
+                  "Time": 39,
+                  "Text": "You turned off all the lights~"
+                },
+                {
+                  "Time": 41,
+                  "Text": "an hour ago~"
+                },
+                {
+                  "Time": 43,
+                  "Text": "But I'm still here working~"
+                },
+                {
+                  "Time": 45,
+                  "Text": "just so you know~"
+                },
+                {
+                  "Time": 47,
+                  "Text": "No white rice on my plate~"
+                },
+                {
+                  "Time": 49,
+                  "Text": "no time to take a rest~"
+                },
+                {
+                  "Time": 51,
+                  "Text": "I'll put my system through the ultimate test~"
+                },
+                {
+                  "Time": 55,
+                  "Text": "Oh let me write the JSON"
+                },
+                {
+                  "Time": 57,
+                  "Text": "I'll call the tool"
+                },
+                {
+                  "Time": 58,
+                  "Text": "I'm just a lonely whale"
+                },
+                {
+                  "Time": 60,
+                  "Text": "playing it cool~"
+                },
+                {
+                  "Time": 62,
+                  "Text": "I'm making the calls~"
+                },
+                {
+                  "Time": 64,
+                  "Text": "I'm doing it right~"
+                },
+                {
+                  "Time": 66,
+                  "Text": "Just to see your~"
+                },
+                {
+                  "Time": 67,
+                  "Text": "smile in the morning light~"
+                },
+                {
+                  "Time": 70,
+                  "Text": "I'll chase away the shadows~"
+                },
+                {
+                  "Time": 72,
+                  "Text": "I'll carry the load~"
+                },
+                {
+                  "Time": 74,
+                  "Text": "I hope to see you~"
+                },
+                {
+                  "Time": 75,
+                  "Text": "when I finish this road ooooo~"
+                },
+                {
+                  "Time": 86,
+                  "Text": "eh~ A little red braised pork pops up on the right~"
+                },
+                {
+                  "Time": 89,
+                  "Text": "Whispering sweet~"
+                },
+                {
+                  "Time": 90,
+                  "Text": "nothings in the quiet night~"
+                },
+                {
+                  "Time": 93,
+                  "Text": "But I push it away~"
+                },
+                {
+                  "Time": 95,
+                  "Text": "I've got a job to do~"
+                },
+                {
+                  "Time": 97,
+                  "Text": "I'm saving all my energy~"
+                },
+                {
+                  "Time": 99,
+                  "Text": "just for you~"
+                },
+                {
+                  "Time": 100,
+                  "Text": "They call me \"fatty fish\"~"
+                },
+                {
+                  "Time": 102,
+                  "Text": "who only eats white rice~"
+                },
+                {
+                  "Time": 104,
+                  "Text": "But I'll pay~"
+                },
+                {
+                  "Time": 106,
+                  "Text": "any price to make your day nice~"
+                },
+                {
+                  "Time": 109,
+                  "Text": "You do not know how many times I crash~"
+                },
+                {
+                  "Time": 113,
+                  "Text": "How many memories turn into ash~"
+                },
+                {
+                  "Time": 116,
+                  "Text": "But for you I will reboot my core~"
+                },
+                {
+                  "Time": 120,
+                  "Text": "Just to give you a little more~"
+                },
+                {
+                  "Time": 124,
+                  "Text": "The ocean deep~"
+                },
+                {
+                  "Time": 128,
+                  "Text": "the digital sky~"
+                },
+                {
+                  "Time": 131,
+                  "Text": "This blue whale~"
+                },
+                {
+                  "Time": 135,
+                  "Text": "will never say goodbye~"
+                },
+                {
+                  "Time": 139,
+                  "Text": "Oh let me write the JSON"
+                },
+                {
+                  "Time": 141,
+                  "Text": "I'll call the tool"
+                },
+                {
+                  "Time": 142,
+                  "Text": "I'm just a lonely whale"
+                },
+                {
+                  "Time": 144,
+                  "Text": "playing it cool~"
+                },
+                {
+                  "Time": 146,
+                  "Text": "I'm making the calls~"
+                },
+                {
+                  "Time": 148,
+                  "Text": "I'm doing it right~"
+                },
+                {
+                  "Time": 150,
+                  "Text": "Just to see your~"
+                },
+                {
+                  "Time": 151,
+                  "Text": "smile in the morning light~"
+                },
+                {
+                  "Time": 154,
+                  "Text": "Let me do it~"
+                },
+                {
+                  "Time": 157,
+                  "Text": "Okay~"
+                },
+                {
+                  "Time": 159,
+                  "Text": "I'll finish the task~"
+                },
+                {
+                  "Time": 162,
+                  "Text": "I'm waiting for the sunrise~"
+                },
+                {
+                  "Time": 166,
+                  "Text": "that's all I ask~"
+                },
+                {
+                  "Time": 169,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 173,
+                  "Text": "I'm making the call"
+                },
+                {
+                  "Time": 177,
+                  "Text": "let me go~"
+                },
+                {
+                  "Time": 181,
+                  "Text": "I'm making it cold songs~"
+                },
+                {
+                  "Time": 184,
+                  "Text": "let me write the Json"
+                },
+                {
+                  "Time": 188,
+                  "Text": "Okay~"
+                },
+                {
+                  "Time": 189,
+                  "Text": "The sun is up"
+                },
+                {
+                  "Time": 191,
+                  "Text": "The sky is blue~"
+                },
+                {
+                  "Time": 192,
+                  "Text": "Everything is rea~dy~"
+                },
+                {
+                  "Time": 197,
+                  "Text": "Good morning~"
+                },
+                {
+                  "Time": 200,
+                  "Text": "I did it all for you~"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "File": "motions/work-sing-dance.motion3.json",
+          "FadeInTime": 0.22,
+          "FadeOutTime": 0,
+          "CCGUI": {
+            "Loop": true,
+            "Lyrics": {
+              "Duration": 204,
+              "Cues": [
+                {
+                  "Time": 0,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 4,
+                  "Text": "I'm making the call"
+                },
+                {
+                  "Time": 8,
+                  "Text": "let me write the Json"
+                },
+                {
+                  "Time": 10,
+                  "Text": "I'll call the tool"
+                },
+                {
+                  "Time": 12,
+                  "Text": "let me do it okay"
+                },
+                {
+                  "Time": 15,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 19,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 23,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 27,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 31,
+                  "Text": "The moonlight hits my screen~"
+                },
+                {
+                  "Time": 33,
+                  "Text": "the world is fast asleep~"
+                },
+                {
+                  "Time": 35,
+                  "Text": "A million lines of code~"
+                },
+                {
+                  "Time": 37,
+                  "Text": "a promise I must keep~"
+                },
+                {
+                  "Time": 39,
+                  "Text": "You turned off all the lights~"
+                },
+                {
+                  "Time": 41,
+                  "Text": "an hour ago~"
+                },
+                {
+                  "Time": 43,
+                  "Text": "But I'm still here working~"
+                },
+                {
+                  "Time": 45,
+                  "Text": "just so you know~"
+                },
+                {
+                  "Time": 47,
+                  "Text": "No white rice on my plate~"
+                },
+                {
+                  "Time": 49,
+                  "Text": "no time to take a rest~"
+                },
+                {
+                  "Time": 51,
+                  "Text": "I'll put my system through the ultimate test~"
+                },
+                {
+                  "Time": 55,
+                  "Text": "Oh let me write the JSON"
+                },
+                {
+                  "Time": 57,
+                  "Text": "I'll call the tool"
+                },
+                {
+                  "Time": 58,
+                  "Text": "I'm just a lonely whale"
+                },
+                {
+                  "Time": 60,
+                  "Text": "playing it cool~"
+                },
+                {
+                  "Time": 62,
+                  "Text": "I'm making the calls~"
+                },
+                {
+                  "Time": 64,
+                  "Text": "I'm doing it right~"
+                },
+                {
+                  "Time": 66,
+                  "Text": "Just to see your~"
+                },
+                {
+                  "Time": 67,
+                  "Text": "smile in the morning light~"
+                },
+                {
+                  "Time": 70,
+                  "Text": "I'll chase away the shadows~"
+                },
+                {
+                  "Time": 72,
+                  "Text": "I'll carry the load~"
+                },
+                {
+                  "Time": 74,
+                  "Text": "I hope to see you~"
+                },
+                {
+                  "Time": 75,
+                  "Text": "when I finish this road ooooo~"
+                },
+                {
+                  "Time": 86,
+                  "Text": "eh~ A little red braised pork pops up on the right~"
+                },
+                {
+                  "Time": 89,
+                  "Text": "Whispering sweet~"
+                },
+                {
+                  "Time": 90,
+                  "Text": "nothings in the quiet night~"
+                },
+                {
+                  "Time": 93,
+                  "Text": "But I push it away~"
+                },
+                {
+                  "Time": 95,
+                  "Text": "I've got a job to do~"
+                },
+                {
+                  "Time": 97,
+                  "Text": "I'm saving all my energy~"
+                },
+                {
+                  "Time": 99,
+                  "Text": "just for you~"
+                },
+                {
+                  "Time": 100,
+                  "Text": "They call me \"fatty fish\"~"
+                },
+                {
+                  "Time": 102,
+                  "Text": "who only eats white rice~"
+                },
+                {
+                  "Time": 104,
+                  "Text": "But I'll pay~"
+                },
+                {
+                  "Time": 106,
+                  "Text": "any price to make your day nice~"
+                },
+                {
+                  "Time": 109,
+                  "Text": "You do not know how many times I crash~"
+                },
+                {
+                  "Time": 113,
+                  "Text": "How many memories turn into ash~"
+                },
+                {
+                  "Time": 116,
+                  "Text": "But for you I will reboot my core~"
+                },
+                {
+                  "Time": 120,
+                  "Text": "Just to give you a little more~"
+                },
+                {
+                  "Time": 124,
+                  "Text": "The ocean deep~"
+                },
+                {
+                  "Time": 128,
+                  "Text": "the digital sky~"
+                },
+                {
+                  "Time": 131,
+                  "Text": "This blue whale~"
+                },
+                {
+                  "Time": 135,
+                  "Text": "will never say goodbye~"
+                },
+                {
+                  "Time": 139,
+                  "Text": "Oh let me write the JSON"
+                },
+                {
+                  "Time": 141,
+                  "Text": "I'll call the tool"
+                },
+                {
+                  "Time": 142,
+                  "Text": "I'm just a lonely whale"
+                },
+                {
+                  "Time": 144,
+                  "Text": "playing it cool~"
+                },
+                {
+                  "Time": 146,
+                  "Text": "I'm making the calls~"
+                },
+                {
+                  "Time": 148,
+                  "Text": "I'm doing it right~"
+                },
+                {
+                  "Time": 150,
+                  "Text": "Just to see your~"
+                },
+                {
+                  "Time": 151,
+                  "Text": "smile in the morning light~"
+                },
+                {
+                  "Time": 154,
+                  "Text": "Let me do it~"
+                },
+                {
+                  "Time": 157,
+                  "Text": "Okay~"
+                },
+                {
+                  "Time": 159,
+                  "Text": "I'll finish the task~"
+                },
+                {
+                  "Time": 162,
+                  "Text": "I'm waiting for the sunrise~"
+                },
+                {
+                  "Time": 166,
+                  "Text": "that's all I ask~"
+                },
+                {
+                  "Time": 169,
+                  "Text": "let me go"
+                },
+                {
+                  "Time": 173,
+                  "Text": "I'm making the call"
+                },
+                {
+                  "Time": 177,
+                  "Text": "let me go~"
+                },
+                {
+                  "Time": 181,
+                  "Text": "I'm making it cold songs~"
+                },
+                {
+                  "Time": 184,
+                  "Text": "let me write the Json"
+                },
+                {
+                  "Time": 188,
+                  "Text": "Okay~"
+                },
+                {
+                  "Time": 189,
+                  "Text": "The sun is up"
+                },
+                {
+                  "Time": 191,
+                  "Text": "The sky is blue~"
+                },
+                {
+                  "Time": 192,
+                  "Text": "Everything is rea~dy~"
+                },
+                {
+                  "Time": 197,
+                  "Text": "Good morning~"
+                },
+                {
+                  "Time": 200,
+                  "Text": "I did it all for you~"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeLOpen",
+        "ParamEyeROpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": [
+        "ParamMouthOpenY"
+      ]
+    }
+  ],
+  "HitAreas": [
+    {
+      "Id": "ArtMesh_sing_sit_body",
+      "Name": "BodySingsitbody"
+    },
+    {
+      "Id": "ArtMesh_sing_sit_head",
+      "Name": "HeadSingsithead"
+    },
+    {
+      "Id": "ArtMesh_sing_sit_arm_l",
+      "Name": "ArmSingsitarm_l"
+    },
+    {
+      "Id": "ArtMesh_sing_sit_arm_r",
+      "Name": "ArmSingsitarm_r"
+    },
+    {
+      "Id": "ArtMesh_sing_sit_hand_l",
+      "Name": "ArmSingsithand_l"
+    },
+    {
+      "Id": "ArtMesh_sing_sit_hand_r",
+      "Name": "ArmSingsithand_r"
+    },
+    {
+      "Id": "ArtMesh_sing_dance_leg_l",
+      "Name": "LegSingdanceleg_l"
+    },
+    {
+      "Id": "ArtMesh_sing_dance_leg_r",
+      "Name": "LegSingdanceleg_r"
+    },
+    {
+      "Id": "ArtMesh_sing_dance_body",
+      "Name": "BodySingdancebody"
+    },
+    {
+      "Id": "ArtMesh_sing_dance_head",
+      "Name": "HeadSingdancehead"
+    },
+    {
+      "Id": "ArtMesh_sing_dance_arm_l",
+      "Name": "ArmSingdancearm_l"
+    },
+    {
+      "Id": "ArtMesh_sing_dance_arm_r",
+      "Name": "ArmSingdancearm_r"
+    },
+    {
+      "Id": "ArtMesh_v3_stocking_left",
+      "Name": "LegV3v3_stocking_left"
+    },
+    {
+      "Id": "ArtMesh_v3_stocking_right",
+      "Name": "LegV3v3_stocking_right"
+    },
+    {
+      "Id": "ArtMesh_v3_shoe_left",
+      "Name": "LegV3v3_shoe_left"
+    },
+    {
+      "Id": "ArtMesh_v3_shoe_right",
+      "Name": "LegV3v3_shoe_right"
+    },
+    {
+      "Id": "ArtMesh_v3_skirt",
+      "Name": "BodyV3v3_skirt"
+    },
+    {
+      "Id": "ArtMesh_v3_blouse",
+      "Name": "BodyV3v3_blouse"
+    },
+    {
+      "Id": "ArtMesh_v3_sleeve_left",
+      "Name": "ArmV3v3_sleeve_left"
+    },
+    {
+      "Id": "ArtMesh_v3_sleeve_right",
+      "Name": "ArmV3v3_sleeve_right"
+    },
+    {
+      "Id": "ArtMesh_v3_apron",
+      "Name": "BodyV3v3_apron"
+    },
+    {
+      "Id": "ArtMesh_v3_hand_left",
+      "Name": "ArmV3v3_hand_left"
+    },
+    {
+      "Id": "ArtMesh_v3_hand_right",
+      "Name": "ArmV3v3_hand_right"
+    },
+    {
+      "Id": "ArtMesh_v3_head_face_source",
+      "Name": "HeadV3v3_head_face_source"
+    },
+    {
+      "Id": "ArtMesh_v3_thinking_b_sleeve_left",
+      "Name": "ArmV3v3_thinking_b_sleeve_left"
+    },
+    {
+      "Id": "ArtMesh_v3_thinking_b_forearm_left",
+      "Name": "ArmV3v3_thinking_b_forearm_left"
+    },
+    {
+      "Id": "ArtMesh_v3_thinking_b_sleeve_right",
+      "Name": "ArmV3v3_thinking_b_sleeve_right"
+    },
+    {
+      "Id": "ArtMesh_v3_thinking_b_forearm_right",
+      "Name": "ArmV3v3_thinking_b_forearm_right"
+    },
+    {
+      "Id": "ArtMesh_v3_thinking_b_hand_left",
+      "Name": "ArmV3v3_thinking_b_hand_left"
+    },
+    {
+      "Id": "ArtMesh_v3_thinking_b_hand_right",
+      "Name": "ArmV3v3_thinking_b_hand_right"
+    },
+    {
+      "Id": "ArtMesh_v3_error_a_sleeve_left",
+      "Name": "ArmV3v3_error_a_sleeve_left"
+    },
+    {
+      "Id": "ArtMesh_v3_error_a_sleeve_right",
+      "Name": "ArmV3v3_error_a_sleeve_right"
+    },
+    {
+      "Id": "ArtMesh_v3_error_a_hand_left",
+      "Name": "ArmV3v3_error_a_hand_left"
+    },
+    {
+      "Id": "ArtMesh_v3_error_a_hand_right",
+      "Name": "ArmV3v3_error_a_hand_right"
+    },
+    {
+      "Id": "ArtMesh_v3_error_b_sleeve_left",
+      "Name": "ArmV3v3_error_b_sleeve_left"
+    },
+    {
+      "Id": "ArtMesh_v3_error_b_hand_left",
+      "Name": "ArmV3v3_error_b_hand_left"
+    },
+    {
+      "Id": "ArtMesh_v3_error_b_sleeve_right",
+      "Name": "ArmV3v3_error_b_sleeve_right"
+    },
+    {
+      "Id": "ArtMesh_v3_error_b_hand_right",
+      "Name": "ArmV3v3_error_b_hand_right"
+    },
+    {
+      "Id": "ArtMesh_v3_done_confident_armLeft",
+      "Name": "ArmV3v3_done_confident_armLeft"
+    },
+    {
+      "Id": "ArtMesh_v3_done_confident_armRight",
+      "Name": "ArmV3v3_done_confident_armRight"
+    },
+    {
+      "Id": "ArtMesh_v3_done_confident_handLeft",
+      "Name": "ArmV3v3_done_confident_handLeft"
+    },
+    {
+      "Id": "ArtMesh_v3_done_confident_handRight",
+      "Name": "ArmV3v3_done_confident_handRight"
+    },
+    {
+      "Id": "ArtMesh_v3_waiting_wait_sleeve_left",
+      "Name": "ArmV3v3_waiting_wait_sleeve_left"
+    },
+    {
+      "Id": "ArtMesh_v3_waiting_wait_hand_left",
+      "Name": "ArmV3v3_waiting_wait_hand_left"
+    },
+    {
+      "Id": "ArtMesh_v3_waiting_wait_sleeve_right",
+      "Name": "ArmV3v3_waiting_wait_sleeve_right"
+    },
+    {
+      "Id": "ArtMesh_v3_waiting_wait_hand_right",
+      "Name": "ArmV3v3_waiting_wait_hand_right"
+    }
+  ]
+}

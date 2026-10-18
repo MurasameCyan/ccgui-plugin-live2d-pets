@@ -1,0 +1,14 @@
+/*
+!/.github/
+!/.gitattributes
+!/.gitignore
+!/README.md
+!/ds-h-v3/
+
+*.cmo3
+*.cmo3.*
+*.can3
+*.can3.*
+*.cmox
+*.psd
+*.psb
