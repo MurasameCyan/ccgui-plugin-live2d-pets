@@ -5,12 +5,11 @@
   "minAppVersion": "1.0.4",
   "sdkVersion": ">=0.3.20",
   "author": "MurasameCyan",
-  "description": "在 CC GUI 中显示可互动的 Live2D 桌宠，并镜像 AI 会话状态。",
+  "description": "让 AI 有个鲜活的伙伴：在 CC GUI 内同步当前会话状态，支持触摸互动、个性台词、自定义 Live2D 模型与动作映射。",
   "repo": "MurasameCyan/ccgui-plugin-live2d-pets",
   "icon": "assets/icons/paw-print.svg",
   "screenshots": [
-    "docs/media/hero.jpg",
-    "docs/media/settings-pet-config.png"
+    "docs/media/hero.jpg"
   ],
   "keywords": [
     "live2d",

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Distribute ds-h-v3 runtime assets on a separate `models` branch, with a CI-generated ZIP and SHA-256 checksum in an independent, non-latest model release. Editor projects and source artwork are excluded.
 - Drag the developer debug panel independently by its title bar. Its position is
   persisted separately from the pet coordinates, survives reopening and reloads,
   and stays within the viewport when the window or panel content changes size.
@@ -16,6 +17,9 @@
 
 ### Changed
 
+- Refresh the plugin description and both READMEs with the CC GUI / ds-h-v3 animated showcase and a full-resolution MP4 link.
+- Document prebuilt Release/CI installation, model-specific work and jump mappings, spatial calibration, and configuration reload behavior. Keep unreleased sequential playback distinct from current-main behavior.
+- Include the bilingual READMEs, license, and linked documentation/media in both CI and Release installation packages.
 - Match the host's switch exactly. The settings toggles mirror
   `components/base/switch` at `size="sm"`, `shape="pill"` class-for-class
   instead of approximating it with hand-rolled inline styles, so track size,
