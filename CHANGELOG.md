@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Select a local model file instead of a directory plus a manually entered path. Fill its granted parent and relative filename automatically, derive an empty name from the filename, retain editable names and explicit Add/Save confirmation, and leave drafts unchanged on cancellation. Requires Plugin SDK 0.3.21; old saved directory grants and remote-model behavior remain compatible.
+
 - Refresh the plugin description and both READMEs with the CC GUI / ds-h-v3 animated showcase and a full-resolution MP4 link.
 - Document prebuilt Release/CI installation, model-specific work and jump mappings, spatial calibration, and configuration reload behavior. Keep unreleased sequential playback distinct from current-main behavior.
 - Include the bilingual READMEs, license, and linked documentation/media in both CI and Release installation packages.
@@ -27,6 +29,7 @@
   tokens. The three developer options are switches too, no longer checkboxes.
 
 ### Fixed
+- Preserve the exact selected local filename through Add, Save, document reload and asset URL construction; leading spaces must not redirect to a different sibling file.
 
 - Ignore fully transparent drawable hit areas before choosing a clicked body part, so hidden pose variants cannot steal clicks from the visible head, arms, body or legs.
 - Package the manifest icon at its declared repo-relative path. A marketplace

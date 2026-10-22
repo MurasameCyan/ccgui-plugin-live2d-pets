@@ -7,7 +7,7 @@ import type { CustomModelEntry } from "../models";
 import type { CustomPersonaDef } from "../persona-shared";
 import { clearReactRuntime, setReactRuntime } from "../react-runtime";
 import { PetRuntime } from "../runtime";
-import type { AssetDirectoryGrant, ReactLike } from "../sdk";
+import type { AssetFileGrant, ReactLike } from "../sdk";
 import { makeContext } from "../test-context";
 import { PetSettingsSection } from "./settings";
 
@@ -61,7 +61,7 @@ async function mountSettings(models: CustomModelEntry[] = [], selected?: string,
   harness.documents.set("custom-models.jsonc", { content: JSON.stringify({ models }), version: "initial-models" });
   if (personas.length > 0) harness.documents.set("personas.jsonc", { content: JSON.stringify({ personas }), version: "initial-personas" });
   if (selected) await harness.ctx.storage.set("config", { model: selected });
-  const grantDirectory = vi.spyOn(harness.ctx.assets, "grantDirectory");
+  const grantFile = vi.spyOn(harness.ctx.assets, "grantFile");
   const remoteUrl = vi.spyOn(harness.ctx.assets, "remoteUrl");
   const revokeDirectory = vi.spyOn(harness.ctx.assets, "revokeDirectory");
   const runtime = new PetRuntime(harness.ctx);
@@ -81,13 +81,12 @@ async function mountSettings(models: CustomModelEntry[] = [], selected?: string,
   cleanups.push(unmount);
   await act(async () => root.render(React.createElement(PetSettingsSection as React.ComponentType<{ runtime: PetRuntime }>, { runtime })));
   const savedModels = () => JSON.parse(harness.documents.get("custom-models.jsonc")!.content.replace(/^\/\/.*$/gm, "")).models as CustomModelEntry[];
-  return { ...harness, runtime, container, unmount, savedModels, grantDirectory, remoteUrl, revokeDirectory };
+  return { ...harness, runtime, container, unmount, savedModels, grantFile, remoteUrl, revokeDirectory };
 }
 
 async function fillLocalDraft(container: ParentNode) {
   await type(container, "名称", "New pet");
-  await click(container, "选择本地模型目录");
-  await type(container, RELATIVE_PATH_FIELD, "Pet/Pet.model3.json");
+  await click(container, "选择本地模型文件");
 }
 
 describe("pet settings model sources", () => {
@@ -101,6 +100,79 @@ describe("pet settings model sources", () => {
     clearReactRuntime();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it.each(["Haru.model3.json", "Shizuku.model.json"])("fills an empty local draft from %s and waits for Add", async (relativePath) => {
+    const { container, ctx, runtime, savedModels } = await mountSettings();
+    Object.assign(ctx.assets, {
+      grantFile: async () => ({ grantId: "picked-file", path: "C:/models/Haru", relativePath }),
+    });
+    await click(container, "选择本地模型文件");
+    const name = relativePath.replace(/\.model3?\.json$/i, "");
+    expect(field(container, "名称").value).toBe(name);
+    expect(field(container, NEW_URL_FIELD).value).toBe("C:/models/Haru");
+    expect(field(container, RELATIVE_PATH_FIELD).value).toBe(relativePath);
+    expect(savedModels()).toEqual([]);
+    await type(container, "名称", "My pet");
+    await click(container, "添加");
+    const saved = savedModels()[0]!;
+    expect(saved).toEqual({
+      id: expect.any(String), name: "My pet", modelUrl: "C:/models/Haru",
+      directoryGrantId: "picked-file", directoryPath: relativePath,
+    });
+    await act(async () => { await runtime.setSettings([{ op: "set", path: ["model"], value: saved.id }]); });
+    expect(runtime.snapshot().config.modelUrl).toBe(`plugin://directory/picked-file/${relativePath}`);
+  });
+
+  it("preserves leading whitespace in a selected filename through Add, Save and reload", async () => {
+    const relativePath = " Haru.model3.json";
+    const { container, ctx, runtime, savedModels, grantFile, unmount } = await mountSettings();
+    grantFile.mockResolvedValueOnce({ grantId: "space-file", path: "C:/models", relativePath });
+    await click(container, "选择本地模型文件");
+    await click(container, "添加");
+    const saved = savedModels()[0]!;
+    expect(saved.directoryPath).toBe(relativePath);
+    await act(async () => { await runtime.setSettings([{ op: "set", path: ["model"], value: saved.id }]); });
+    const expectedUrl = `plugin://directory/space-file/${relativePath}`;
+    expect(runtime.snapshot().config.modelUrl).toBe(expectedUrl);
+    await click(customRows(container), "修改");
+    await click(container, "保存");
+    expect(savedModels()[0]!.directoryPath).toBe(relativePath);
+    await act(async () => unmount());
+    const reloaded = new PetRuntime(ctx);
+    try {
+      await reloaded.ready;
+      expect(reloaded.snapshot().config.modelUrl).toBe(expectedUrl);
+      expect(reloaded.modelAssetUrl(saved.id)).toBe(expectedUrl);
+    } finally {
+      reloaded.dispose();
+    }
+  });
+
+  it("keeps a manually named draft when a local model file is selected", async () => {
+    const { container, ctx, savedModels } = await mountSettings();
+    Object.assign(ctx.assets, {
+      grantFile: async () => ({ grantId: "picked-file", path: "C:/models/Haru", relativePath: "Haru.model3.json" }),
+    });
+    await type(container, "名称", "Custom name");
+    await click(container, "选择本地模型文件");
+    expect(field(container, "名称").value).toBe("Custom name");
+    await click(container, "添加");
+    expect(savedModels()[0]).toMatchObject({ name: "Custom name", directoryPath: "Haru.model3.json" });
+  });
+
+  it("preserves the current draft when file selection is cancelled", async () => {
+    const { container, ctx, savedModels } = await mountSettings();
+    Object.assign(ctx.assets, { grantFile: async () => null });
+    await type(container, "名称", "Still remote");
+    await type(container, NEW_URL_FIELD, REMOTE_URL);
+    await click(container, "选择本地模型文件");
+    expect(field(container, "名称").value).toBe("Still remote");
+    expect(field(container, NEW_URL_FIELD).value).toBe(REMOTE_URL);
+    expect(container.querySelector(`input[placeholder="${RELATIVE_PATH_FIELD}"]`)).toBeNull();
+    expect(savedModels()).toEqual([]);
+    await click(container, "添加");
+    expect(savedModels()).toEqual([{ id: expect.any(String), name: "Still remote", modelUrl: REMOTE_URL }]);
   });
 
   it("uses the host menu styling for persona choices and persists a selection", async () => {
@@ -266,20 +338,20 @@ describe("pet settings model sources", () => {
     expect(runtime.snapshot().config.motionMap.body).toEqual(["tap_body"]);
   });
 
-  it("adds a granted directory model and retains its selected source after reload", async () => {
+  it("adds a selected local file and retains its source after reload", async () => {
     const { container, runtime, savedModels, ctx, unmount } = await mountSettings();
     await fillLocalDraft(container);
     await click(container, "添加");
     expect(savedModels()).toHaveLength(1);
     const saved = savedModels()[0]!;
-    expect(saved).toMatchObject({ name: "New pet", modelUrl: "C:/models", directoryGrantId: "grant", directoryPath: "Pet/Pet.model3.json" });
+    expect(saved).toMatchObject({ name: "New pet", modelUrl: "C:/models", directoryGrantId: "grant", directoryPath: "Pet.model3.json" });
     await act(async () => { await runtime.setSettings([{ op: "set", path: ["model"], value: saved.id }]); });
-    expect(runtime.snapshot().config.modelUrl).toBe("plugin://directory/grant/Pet/Pet.model3.json");
+    expect(runtime.snapshot().config.modelUrl).toBe("plugin://directory/grant/Pet.model3.json");
     await act(async () => unmount());
     const reloaded = new PetRuntime(ctx);
     cleanups.push(() => reloaded.dispose());
     await reloaded.ready;
-    expect(reloaded.snapshot().config.modelUrl).toBe("plugin://directory/grant/Pet/Pet.model3.json");
+    expect(reloaded.snapshot().config.modelUrl).toBe("plugin://directory/grant/Pet.model3.json");
   });
 
   it("adds the newly typed remote URL without retaining an earlier directory source", async () => {
@@ -327,16 +399,17 @@ describe("pet settings model sources", () => {
     expect(runtime.snapshot().config.modelUrl).toBe(REMOTE_URL);
   });
 
-  it("changes a remote model to the newly selected directory", async () => {
-    const { container, runtime, savedModels } = await mountSettings([REMOTE_MODEL], REMOTE_MODEL.id);
+  it("changes a remote model to the selected local file without manually filling its path", async () => {
+    const { container, runtime, savedModels, grantFile } = await mountSettings([REMOTE_MODEL], REMOTE_MODEL.id);
+    grantFile.mockResolvedValueOnce({ grantId: "other-file", path: "C:/models/Other", relativePath: "Other.model3.json" });
     await click(customRows(container), "修改");
-    await click(container, "重新授权目录");
-    await type(container, RELATIVE_PATH_FIELD, "Other/Other.model3.json");
+    await click(container, "重新选择模型文件");
+    expect(field(container, RELATIVE_PATH_FIELD).value).toBe("Other.model3.json");
     await click(container, "保存");
     expect(savedModels()).toEqual([{
-      ...REMOTE_MODEL, modelUrl: "C:/models", directoryGrantId: "grant", directoryPath: "Other/Other.model3.json",
+      ...REMOTE_MODEL, modelUrl: "C:/models/Other", directoryGrantId: "other-file", directoryPath: "Other.model3.json",
     }]);
-    expect(runtime.snapshot().config.modelUrl).toBe("plugin://directory/grant/Other/Other.model3.json");
+    expect(runtime.snapshot().config.modelUrl).toBe("plugin://directory/other-file/Other.model3.json");
   });
 
   it("checks a remote URL against the SDK even after a local directory was selected", async () => {
@@ -372,69 +445,69 @@ describe("pet settings model sources", () => {
     expect(container.textContent).toContain("TapHead");
   });
 
-  it("preserves a remote draft when directory selection fails", async () => {
-    const { container, savedModels, grantDirectory } = await mountSettings([REMOTE_MODEL]);
-    grantDirectory.mockRejectedValueOnce(new Error("picker-cancelled"));
+  it("preserves a remote draft when file selection fails", async () => {
+    const { container, savedModels, grantFile } = await mountSettings([REMOTE_MODEL]);
+    grantFile.mockRejectedValueOnce(new Error("picker-unavailable"));
     await click(customRows(container), "修改");
     await type(customRows(container), "名称", "Still remote");
-    await click(container, "重新授权目录");
+    await click(container, "重新选择模型文件");
     expect(field(container, EDIT_URL_FIELD).value).toBe(REMOTE_URL);
     expect(field(customRows(container), "名称").value).toBe("Still remote");
-    expect(container.textContent).toContain("picker-cancelled");
+    expect(container.textContent).toContain("picker-unavailable");
     await click(container, "保存");
     expect(savedModels()).toEqual([{ ...REMOTE_MODEL, name: "Still remote" }]);
   });
 
-  it("ignores a directory result that arrives after the draft URL changes", async () => {
-    const { container, grantDirectory, savedModels } = await mountSettings();
-    const pending = deferred<AssetDirectoryGrant>();
-    grantDirectory.mockReturnValueOnce(pending.promise);
+  it("ignores a file result that arrives after the draft URL changes", async () => {
+    const { container, grantFile, savedModels } = await mountSettings();
+    const pending = deferred<AssetFileGrant>();
+    grantFile.mockReturnValueOnce(pending.promise);
     await type(container, "名称", "New pet");
-    await click(container, "选择本地模型目录");
+    await click(container, "选择本地模型文件");
     await type(container, NEW_URL_FIELD, REMOTE_URL);
-    await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models" }));
+    await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" }));
     expect(field(container, NEW_URL_FIELD).value).toBe(REMOTE_URL);
     expect(container.querySelector(`input[placeholder="${RELATIVE_PATH_FIELD}"]`)).toBeNull();
     await click(container, "添加");
     expect(savedModels()).toEqual([{ id: expect.any(String), name: "New pet", modelUrl: REMOTE_URL }]);
   });
 
-  it("uses the latest directory selection when picker requests finish out of order", async () => {
-    const { container, grantDirectory, savedModels } = await mountSettings();
-    const first = deferred<AssetDirectoryGrant>();
-    const second = deferred<AssetDirectoryGrant>();
-    grantDirectory.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  it("uses the latest file selection when picker requests finish out of order", async () => {
+    const { container, grantFile, savedModels } = await mountSettings();
+    const first = deferred<AssetFileGrant>();
+    const second = deferred<AssetFileGrant>();
+    grantFile.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     await type(container, "名称", "New pet");
-    await click(container, "选择本地模型目录");
-    await click(container, "选择本地模型目录");
-    await act(async () => second.resolve({ grantId: "second", path: "C:/second" }));
-    await act(async () => first.resolve({ grantId: "first", path: "C:/first" }));
+    await click(container, "选择本地模型文件");
+    await click(container, "选择本地模型文件");
+    await act(async () => second.resolve({ grantId: "second", path: "C:/second", relativePath: "Second.model3.json" }));
+    await act(async () => first.resolve({ grantId: "first", path: "C:/first", relativePath: "First.model3.json" }));
     expect(field(container, NEW_URL_FIELD).value).toBe("C:/second");
-    await type(container, RELATIVE_PATH_FIELD, "Pet.model3.json");
+    expect(field(container, RELATIVE_PATH_FIELD).value).toBe("Second.model3.json");
     await click(container, "添加");
-    expect(savedModels()[0]).toMatchObject({ modelUrl: "C:/second", directoryGrantId: "second", directoryPath: "Pet.model3.json" });
+    expect(savedModels()[0]).toMatchObject({ modelUrl: "C:/second", directoryGrantId: "second", directoryPath: "Second.model3.json" });
   });
 
-  it("does not apply a cancelled editor's directory result to another model", async () => {
-    const { container, grantDirectory, savedModels } = await mountSettings([LOCAL_MODEL, REMOTE_MODEL]);
-    const pending = deferred<AssetDirectoryGrant>();
-    grantDirectory.mockReturnValueOnce(pending.promise);
+  it("does not apply a cancelled editor's file result to another model", async () => {
+    const { container, grantFile, savedModels } = await mountSettings([LOCAL_MODEL, REMOTE_MODEL]);
+    const pending = deferred<AssetFileGrant>();
+    grantFile.mockReturnValueOnce(pending.promise);
     await click(customRows(container), "修改", 0);
-    await click(container, "重新授权目录");
+    await click(container, "重新选择模型文件");
     await click(container, "取消");
     await click(customRows(container), "修改", 1);
-    await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models" }));
+    await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" }));
     expect(field(container, EDIT_URL_FIELD).value).toBe(REMOTE_URL);
     await click(container, "保存");
     expect(savedModels()).toEqual([LOCAL_MODEL, REMOTE_MODEL]);
   });
 
-  it("does not show a previous editor's late directory error in the current editor", async () => {
-    const { container, grantDirectory } = await mountSettings([LOCAL_MODEL, REMOTE_MODEL]);
-    const pending = deferred<AssetDirectoryGrant>();
-    grantDirectory.mockReturnValueOnce(pending.promise);
+  it("does not show a previous editor's late file error in the current editor", async () => {
+    const { container, grantFile } = await mountSettings([LOCAL_MODEL, REMOTE_MODEL]);
+    const pending = deferred<AssetFileGrant>();
+    grantFile.mockReturnValueOnce(pending.promise);
     await click(customRows(container), "修改", 0);
-    await click(container, "重新授权目录");
+    await click(container, "重新选择模型文件");
     await click(container, "取消");
     await click(customRows(container), "修改", 1);
     await act(async () => pending.reject(new Error("stale-picker-error")));
@@ -443,62 +516,62 @@ describe("pet settings model sources", () => {
   });
 
   it("ignores a picker result when switching directly to another model editor", async () => {
-    const { container, grantDirectory } = await mountSettings([LOCAL_MODEL, REMOTE_MODEL]);
-    const pending = deferred<AssetDirectoryGrant>();
-    grantDirectory.mockReturnValueOnce(pending.promise);
+    const { container, grantFile } = await mountSettings([LOCAL_MODEL, REMOTE_MODEL]);
+    const pending = deferred<AssetFileGrant>();
+    grantFile.mockReturnValueOnce(pending.promise);
     await click(customRows(container), "修改", 0);
-    await click(container, "重新授权目录");
+    await click(container, "重新选择模型文件");
     // The first model is already being edited, so the remaining button opens
     // the second model without going through the Cancel handler.
     await click(customRows(container), "修改");
-    await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models" }));
+    await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" }));
     expect(field(container, EDIT_URL_FIELD).value).toBe(REMOTE_URL);
     expect(field(customRows(container), "名称").value).toBe(REMOTE_MODEL.name);
   });
 
   it.each(["resolve", "reject"] as const)("ignores a picker %s after the new model has been added", async (outcome) => {
-    const { container, grantDirectory, savedModels } = await mountSettings();
-    const pending = deferred<AssetDirectoryGrant>();
-    grantDirectory.mockReturnValueOnce(pending.promise);
+    const { container, grantFile, savedModels } = await mountSettings();
+    const pending = deferred<AssetFileGrant>();
+    grantFile.mockReturnValueOnce(pending.promise);
     await type(container, "名称", "New pet");
     await type(container, NEW_URL_FIELD, REMOTE_URL);
-    await click(container, "选择本地模型目录");
+    await click(container, "选择本地模型文件");
     await click(container, "添加");
     await act(async () => {
-      if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models" });
+      if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" });
       else pending.reject(new Error("saved-picker-error"));
     });
     expect(field(container, NEW_URL_FIELD).value).toBe("");
-    expect(container.textContent).not.toContain("目录已授权");
+    expect(container.textContent).not.toContain("模型文件已选择");
     expect(container.textContent).not.toContain("saved-picker-error");
     expect(savedModels()).toEqual([{ id: expect.any(String), name: "New pet", modelUrl: REMOTE_URL }]);
   });
 
   it.each(["resolve", "reject"] as const)("ignores a picker %s after the edited model has been saved", async (outcome) => {
-    const { container, grantDirectory, savedModels } = await mountSettings([REMOTE_MODEL]);
-    const pending = deferred<AssetDirectoryGrant>();
-    grantDirectory.mockReturnValueOnce(pending.promise);
+    const { container, grantFile, savedModels } = await mountSettings([REMOTE_MODEL]);
+    const pending = deferred<AssetFileGrant>();
+    grantFile.mockReturnValueOnce(pending.promise);
     await click(customRows(container), "修改");
-    await click(container, "重新授权目录");
+    await click(container, "重新选择模型文件");
     await click(container, "保存");
     await act(async () => {
-      if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models" });
+      if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" });
       else pending.reject(new Error("saved-picker-error"));
     });
     expect(customRows(container).querySelector(`input[placeholder="${EDIT_URL_FIELD}"]`)).toBeNull();
-    expect(container.textContent).not.toContain("目录已授权");
+    expect(container.textContent).not.toContain("模型文件已选择");
     expect(container.textContent).not.toContain("saved-picker-error");
     expect(savedModels()).toEqual([REMOTE_MODEL]);
   });
 
   it.each(["resolve", "reject"] as const)("settles a late picker %s after unmount without saving a model", async (outcome) => {
-    const { container, grantDirectory, savedModels, unmount } = await mountSettings();
-    const pending = deferred<AssetDirectoryGrant>();
-    grantDirectory.mockReturnValueOnce(pending.promise);
-    await click(container, "选择本地模型目录");
+    const { container, grantFile, savedModels, unmount } = await mountSettings();
+    const pending = deferred<AssetFileGrant>();
+    grantFile.mockReturnValueOnce(pending.promise);
+    await click(container, "选择本地模型文件");
     await act(async () => unmount());
     await act(async () => {
-      if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models" });
+      if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" });
       else pending.reject(new Error("unmounted-picker-error"));
     });
     expect(savedModels()).toEqual([]);

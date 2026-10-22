@@ -2,7 +2,7 @@
  * Minimal local mirror of the host SDK contract used by this standalone
  * plugin. Keep signatures in sync with packages/plugin-sdk/src/context.ts.
  *
- * @ccgui/plugin-sdk mirror v0.3.20
+ * @ccgui/plugin-sdk mirror v0.3.21
  */
 export type Disposer = () => void;
 export type ReactNode = unknown;
@@ -111,6 +111,11 @@ export interface RuntimeSwitchHooks {
 }
 
 export interface AssetDirectoryGrant { grantId: string; path: string }
+export interface AssetFileGrant extends AssetDirectoryGrant { relativePath: string }
+export interface AssetFilePickerOptions {
+  title?: string;
+  filters?: { name: string; extensions: string[] }[];
+}
 export interface DocumentReadResult { content: string; version: string }
 export interface DocumentStorage {
   getLocation(): Promise<{ kind: DocumentStorageLocationKind; path: string }>;
@@ -149,6 +154,7 @@ export interface PluginContext {
     documentUrl(relativePath: string): string;
     remoteUrl(url: string): string;
     grantDirectory(): Promise<AssetDirectoryGrant>;
+    grantFile(options?: AssetFilePickerOptions): Promise<AssetFileGrant | null>;
     listDirectories(): Promise<AssetDirectoryGrant[]>;
     revokeDirectory(grantId: string): Promise<void>;
     directoryUrl(grantId: string, relativePath: string): string;

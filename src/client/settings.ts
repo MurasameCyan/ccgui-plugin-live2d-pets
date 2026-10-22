@@ -365,14 +365,14 @@ function modelEntry(
 ): CustomModelEntry | null {
   const trimmedName = name.trim();
   const trimmedUrl = modelUrl.trim();
-  const trimmedDirectoryPath = directoryPath?.trim() ?? "";
+  const relativePath = directoryPath ?? "";
   if (!trimmedName || !isSupportedModelLocation(trimmedUrl)) return null;
   const remote = isRemoteModelUrl(trimmedUrl);
-  if (!remote && (!directoryGrantId || !trimmedDirectoryPath)) return null;
+  if (!remote && (!directoryGrantId || !relativePath)) return null;
   const entry: CustomModelEntry = { id, name: trimmedName, modelUrl: trimmedUrl };
-  if (!remote && directoryGrantId && trimmedDirectoryPath) {
+  if (!remote && directoryGrantId && relativePath) {
     entry.directoryGrantId = directoryGrantId;
-    entry.directoryPath = trimmedDirectoryPath;
+    entry.directoryPath = relativePath;
   }
   return entry;
 }
@@ -563,23 +563,28 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     setNotice(null);
   };
 
-  const pickDirectory = (target: "new" | "edit"): void => {
+  const pickModelFile = (target: "new" | "edit"): void => {
     const request = ++directoryRequests.current[target];
-    void runtime.grantDirectory().then((grant) => {
-      if (directoryRequests.current[target] !== request) return;
+    void runtime.grantFile().then((grant) => {
+      if (directoryRequests.current[target] !== request || grant === null) return;
+      const name = grant.relativePath.replace(/(?:\.model3?)?\.json$/i, "");
       if (target === "new") {
+        setNewName((current) => current.trim() ? current : name);
         setNewGrantId(grant.grantId);
         setNewGrantPath(grant.path);
         setNewUrl(grant.path);
+        setNewDirectoryPath(grant.relativePath);
       } else {
+        setEditName((current) => current.trim() ? current : name);
         setEditGrantId(grant.grantId);
         setEditGrantPath(grant.path);
         setEditUrl(grant.path);
+        setEditDirectoryPath(grant.relativePath);
       }
-      setNotice("目录已授权；请填写目录内的 .model.json 或 .model3.json 相对路径。");
+      setNotice(`模型文件已选择，所在目录已授权；确认名称后点击“${target === "new" ? "添加" : "保存"}”。`);
     }).catch((error) => {
       if (directoryRequests.current[target] !== request) return;
-      setNotice(`目录授权失败：${error instanceof Error ? error.message : String(error)}`);
+      setNotice(`本地模型选择失败：${error instanceof Error ? error.message : String(error)}`);
     });
   };
 
@@ -630,7 +635,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       runtime.modelAssetUrl(entry);
       return true;
     } catch {
-      setNotice("该远程模型域名未获插件权限；请使用 jsDelivr 或选择本地授权目录。");
+      setNotice("该远程模型域名未获插件权限；请使用 jsDelivr 或选择本地模型文件。");
       return false;
     }
   };
@@ -638,7 +643,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
   const addModel = (): void => {
     const candidate = modelEntry(newCustomModelId(), newName, newUrl, newGrantId, newDirectoryPath);
     if (!candidate || !modelIsAllowed(candidate)) {
-      if (!candidate) setNotice("请填写名称与可访问的模型地址；本地模型需先授权目录并填写相对路径。");
+      if (!candidate) setNotice("请填写名称与可访问的模型地址，或选择本地模型文件自动填入。");
       return;
     }
     const spatialTap = overrideFromDraft(newSpatial);
@@ -772,7 +777,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
           createElement("button", { style: buttonStyle, onClick: cancelEdit }, "取消"),
         ),
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          createElement("button", { style: panelTabStyle, onClick: () => pickDirectory("edit") }, "重新授权目录"),
+          createElement("button", { style: panelTabStyle, onClick: () => pickModelFile("edit") }, "重新选择模型文件"),
           editGrantPath && createElement("span", { style: { fontSize: 11, color: "#888", alignSelf: "center", wordBreak: "break-all" } }, editGrantPath),
           editGrantId && createElement("input", { style: { ...inputStyle, flex: 1 }, value: editDirectoryPath, placeholder: "目录内相对 .model.json 或 .model3.json 路径", onChange: (event: Event) => setEditDirectoryPath((event.currentTarget as HTMLInputElement).value) }),
         ),
@@ -815,7 +820,7 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
           createElement("button", { style: buttonStyle, disabled: !writable, onClick: addModel }, "添加"),
         ),
         createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          createElement("button", { style: panelTabStyle, disabled: !writable, onClick: () => pickDirectory("new") }, "选择本地模型目录"),
+          createElement("button", { style: panelTabStyle, disabled: !writable, onClick: () => pickModelFile("new") }, "选择本地模型文件"),
           newGrantPath && createElement("span", { style: { fontSize: 11, color: "#888", alignSelf: "center", wordBreak: "break-all" } }, newGrantPath),
           newGrantId && createElement("input", { style: { ...inputStyle, flex: 1 }, value: newDirectoryPath, placeholder: "目录内相对 .model.json 或 .model3.json 路径", disabled: !writable, onChange: (event: Event) => setNewDirectoryPath((event.currentTarget as HTMLInputElement).value) }),
         ),

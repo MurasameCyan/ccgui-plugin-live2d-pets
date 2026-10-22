@@ -42,6 +42,7 @@ export function makeContext() {
       documentUrl(path: string) { return `plugin://document/${path}`; },
       remoteUrl(url: string) { return url; },
       async grantDirectory() { return { grantId: "grant", path: "C:/models" }; },
+      async grantFile() { return { grantId: "grant", path: "C:/models", relativePath: "Pet.model3.json" }; },
       async listDirectories() { return []; },
       async revokeDirectory() {},
       directoryUrl(grantId: string, path: string) { return `plugin://directory/${grantId}/${path}`; },
@@ -66,7 +67,7 @@ export function makeContext() {
         for (const callback of [...(topics.get(topic) ?? [])]) callback(data);
       },
     },
-    host: { appVersion: "1.0.4", sdkVersion: "0.3.17", locale: "zh-CN", isWeb: false },
+    host: { appVersion: "1.0.4", sdkVersion: "0.3.21", locale: "zh-CN", isWeb: false },
   } as unknown as PluginContext;
   return {
     ctx,

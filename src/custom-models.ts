@@ -4,7 +4,7 @@ import { isSupportedModelLocation } from "./models";
 export const CUSTOM_MODELS_FILENAME = "custom-models.jsonc";
 export interface CustomModelsFileView { models: CustomModelEntry[]; error: string | null; path: string; }
 const HEADER = `// CC GUI Live2D Pets 自定义模型（JSONC）。
-// 远程模型填写 model.json 或 model3.json URL；本地模型请在设置中选择模型目录后保存。
+// 远程模型填写 model.json 或 model3.json URL；本地模型请在设置中选择模型文件后保存。
 // 可选字段：spatialTap / animationMap。`;
 export function serializeCustomModels(models: readonly CustomModelEntry[]): string {
   return `${HEADER}\n${JSON.stringify({ models }, null, 2)}\n`;
@@ -16,7 +16,7 @@ export function normalizeCustomModel(raw: unknown): CustomModelEntry | null {
   const name = typeof record.name === "string" ? record.name.trim() : "";
   const modelUrl = typeof record.modelUrl === "string" ? record.modelUrl.trim() : "";
   const directoryGrantId = typeof record.directoryGrantId === "string" ? record.directoryGrantId.trim() : undefined;
-  const directoryPath = typeof record.directoryPath === "string" ? record.directoryPath.trim() : undefined;
+  const directoryPath = typeof record.directoryPath === "string" ? record.directoryPath : undefined;
   if (!id || !/^[a-z][a-z0-9_-]*$/i.test(id) || !name) return null;
   if (!isSupportedModelLocation(modelUrl) && !(directoryGrantId && directoryPath)) return null;
   const entry: CustomModelEntry = { id, name, modelUrl };

@@ -37,7 +37,7 @@ A Live2D pet inside the CC GUI viewport. It follows the active AI session and su
 
 No local build is required. The source repository root is not an installable plugin directory. For the current development version, use the package from [GitHub Actions](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/actions/workflows/package.yml). Install an updated directory with the same plugin ID to update the plugin. Releases are the published versions; `main` may contain unreleased changes.
 
-The host must provide **Plugin SDK ≥ 0.3.20** in addition to satisfying the manifest's minimum application version.
+The host must provide **Plugin SDK ≥ 0.3.21**, including `assets.grantFile`, in addition to satisfying the manifest's minimum application version.
 
 ## Development
 
@@ -55,7 +55,7 @@ Build and packaging run in GitHub Actions. CI invokes `bun run validate` for typ
 
 - Curated models use `cdn.jsdelivr.net`, declared as an exact manifest network grant.
 - A different remote host requires a matching `network:<host>` permission in `manifest.json` and a new release.
-- Local models use the CC GUI asset-directory grant. Select a directory in settings, then enter the relative `.model.json` or `.model3.json` path. The model's sibling textures, moc/moc3, and motion assets are served through the same grant.
+- Local models use the CC GUI asset-directory grant. Choose a `.model.json` or `.model3.json` file in settings; its parent directory is granted and its relative filename is filled automatically. Empty names are derived from the filename; existing names remain editable. Confirm with **Add** or **Save**; cancelling the picker leaves the draft unchanged. Sibling textures, moc/moc3, and motion assets use the same grant.
 - Users remain responsible for the license terms of custom models.
 
 ### Download the ds-h-v3 model
@@ -64,7 +64,7 @@ Build and packaging run in GitHub Actions. CI invokes `bun run validate` for typ
 
 - **30 files, 40.87 MB (38.98 MiB) unpacked**: model entry, compiled MOC3, 12 textures, 14 motions, physics, and display metadata.
 - **Runtime assets only.** No CMO/CMO3, CAN3, PSD/PSB editor projects, source artwork, or validation files are uploaded. Model assets are kept off the plugin's `main` branch and out of its installation package.
-- Extract the ZIP and keep the complete `ds-h-v3/` directory. In **My models**, grant access to that directory and enter `ds-h-v3.model3.json` as the relative entry. Do not copy just the entry file. **This ZIP is a model, not a plugin installer**; Cubism Editor is not required.
+- Extract the ZIP and keep the complete `ds-h-v3/` directory. In **My models**, choose `ds-h-v3.model3.json`, allow access to its parent directory, then confirm the filled name with **Add**. Do not copy just the entry file. **This ZIP is a model, not a plugin installer**; Cubism Editor is not required.
 - GitHub Actions creates the ZIP and checksum. The model has a separate release tag and does not replace the plugin's latest release.
 
 ### Mapping the showcase model

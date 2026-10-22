@@ -15,7 +15,7 @@ The CC GUI SDK provides the equivalent primitives needed for the user-visible be
 - `ctx.hooks.registerSessionHooks` and `ctx.hooks.registerTurnHooks` with normalized runtime events.
 - `ctx.storage` for scalar preferences and display position.
 - `ctx.documentStorage` for private CAS text files.
-- `ctx.assets.bundleUrl`, `ctx.assets.remoteUrl`, and user-driven `ctx.assets.grantDirectory`/`directoryUrl`.
+- `ctx.assets.bundleUrl`, `ctx.assets.remoteUrl`, and user-driven `ctx.assets.grantFile`/`directoryUrl`.
 
 ## Decision
 
@@ -24,11 +24,12 @@ The CC GUI SDK provides the equivalent primitives needed for the user-visible be
 3. Store settings in plugin KV and store `personas.jsonc` plus `custom-models.jsonc` in private document storage.
 4. Ship the vendor runtime scripts as reviewed bundle assets. Load them through `ctx.assets.bundleUrl`; never inject a remote script. Load Pixi's matching official `@pixi/unsafe-eval` 6.5.10 adapter immediately after PixiJS. The bundled display pair provides the shared Pixi Live2D model/factory; the generated adapter registers the official Cubism 5.3 SDK for Web (R5) runtime for Cubism 3–5.3 `.model3.json`. The adapter does not add a second Pixi/common factory or relax the host CSP. Before creating the Pixi application, raise `PIXI.settings.PREFER_ENV` to `ENV.WEBGL2`: Pixi 6.5.10 derives the default from user-agent mobile detection, while R5's 5.3 blend path requires `WebGL2RenderingContext.blitFramebuffer`. Pixi still falls back to WebGL 1 when WebGL 2 is unavailable.
 5. Load curated model URLs through `ctx.assets.remoteUrl`. Manifest grants `network:cdn.jsdelivr.net` exactly. Custom remote model hosts are rejected unless a future manifest grants them.
-6. Replace arbitrary local filesystem paths and `/pet-local-models` with a user-selected asset directory grant plus a relative model path.
+6. Replace arbitrary local filesystem paths and `/pet-local-models` with `ctx.assets.grantFile`: selecting the model entry grants its parent directory and returns the relative filename. Fill an empty name from the filename, preserve user-entered names, and retain explicit Add/Save confirmation. Cancellation returns null and leaves the draft unchanged. Existing saved directory grants remain valid.
+   Preserve the selected relative filename verbatim through draft confirmation, JSONC reload and asset URL resolution; whitespace is part of file identity, not display-name normalization.
 7. Keep model rendering and interaction in the overlay component. The host overlay container remains pointer-transparent outside the interactive canvas.
 8. Register the settings icon as a React component through the SDK; do not mutate host settings DOM with a `MutationObserver`.
 9. Keep the six personas, 13 speech pools, custom base inheritance, five curated models, spatial tap fallback, animation mapping, motion priority, focus suppression, completion hold, and visibility throttling.
-10. Require SDK `>=0.3.17`, using the common compatibility line (upstream `0.3.15` plus the CCB and Live2D shared capabilities) as the minimum supported contract for overlays, the asset bridge and `onTurnStarted`. Newer hosts pass the version handshake; the mirror stamp records the minimum rather than pinning the runtime host. Hosts must still supply the required capabilities, which an application version check alone does not establish.
+10. Require SDK `>=0.3.21` for the file picker in addition to the common compatibility line's overlay, asset bridge and `onTurnStarted` capabilities. Newer hosts pass the version handshake; the mirror stamp records the minimum rather than pinning the runtime host. An application version check alone does not establish SDK capability availability.
 
 The overlay subscribes before loading vendor scripts or models so display controls also work during loading and fallback. Initial and replacement models use the same load queue. Each model's Cubism core is explicitly disposed, including models whose load completes after unmount; destroying the PIXI application alone does not destroy its stage children by default.
 
@@ -63,5 +64,5 @@ Rejected. The CC GUI SDK accepts an icon component directly; DOM mutation is bri
 - All original user-facing functions have an SDK-native implementation.
 - DSH-only API route/SSE behavior is intentionally gone; there is no second network server to maintain.
 - Remote custom models need a manifest permission update; this is explicit and reviewable.
-- Local model setup gains a one-time directory authorization step.
+- Local model setup uses one file selection that explicitly authorizes its parent directory; paths are filled automatically without uploading or copying model files.
 - The plugin can be installed, unloaded, and reloaded without host-specific global state.

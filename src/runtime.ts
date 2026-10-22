@@ -1,6 +1,6 @@
 import type {
   AfterTurnEvent,
-  AssetDirectoryGrant,
+  AssetFileGrant,
   Disposer,
   NormalizedRuntimeEvent,
   PluginContext,
@@ -115,7 +115,7 @@ function isTerminal(event: AfterTurnEvent): boolean {
   return event.status === "completed" || event.status === "cancelled" || event.status === "failed";
 }
 function normalizeRelativePath(value: string): string {
-  return value.trim().replaceAll("\\", "/").replace(/^\/+/, "");
+  return value.replaceAll("\\", "/").replace(/^\/+/, "");
 }
 
 function isFatalDocumentParseError(error: string | null): boolean {
@@ -547,7 +547,15 @@ export class PetRuntime {
     return { ...this.display };
   }
   async resetDisplay(): Promise<PetDisplay> { return this.setDisplay(DEFAULT_DISPLAY); }
-  async grantDirectory(): Promise<AssetDirectoryGrant> { return this.ctx.assets.grantDirectory(); }
+  async grantFile(): Promise<AssetFileGrant | null> {
+    return this.ctx.assets.grantFile({
+      title: "选择 Live2D 模型文件（同时允许插件读取其所在目录）",
+      filters: [
+        { name: "Live2D 模型", extensions: ["model.json", "model3.json"] },
+        { name: "JSON（含 model.json）", extensions: ["json"] },
+      ],
+    });
+  }
 
   modelAssetUrl(entry: CustomModelEntry | string): string {
     const model = typeof entry === "string" ? this.customModels.find((candidate) => candidate.id === entry) : entry;
@@ -555,7 +563,7 @@ export class PetRuntime {
       return this.ctx.assets.directoryUrl(model.directoryGrantId, normalizeRelativePath(model.directoryPath));
     }
     const location = typeof entry === "string" ? entry : entry.modelUrl;
-    if (!/^https?:\/\//i.test(location.trim())) throw new Error("本地模型请先选择授权目录");
+    if (!/^https?:\/\//i.test(location.trim())) throw new Error("本地模型请先选择并授权模型文件");
     return this.ctx.assets.remoteUrl(location.trim());
   }
   async fetchMotionGroups(entry: CustomModelEntry | string): Promise<string[]> {

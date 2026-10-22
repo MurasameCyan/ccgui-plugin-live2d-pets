@@ -20,9 +20,9 @@
 
 不需要本地编译；源码仓库根目录不是安装目录。需要主分支开发版本时，使用 [GitHub Actions](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/actions/workflows/package.yml) 的安装包。更新时安装同一插件 ID 的新目录即可；当前发行版本以 Releases 为准，主分支可能包含尚未发版的改动。
 
-需要宿主 **Plugin SDK ≥ 0.3.20**（`ui:overlay` 视口挂载、资源桥
-`assets:bundle` / `assets:directory`、回合开始 hook 与 `session://activated`
-话题都在共通兼容线上）。仅应用版本号满足 `minAppVersion` 还不够。
+需要宿主 **Plugin SDK ≥ 0.3.21**，提供 `ui:overlay`、资源桥、回合开始 hook、
+`session://activated` 与文件选择并授权父目录的 `assets.grantFile`。
+仅应用版本号满足 `minAppVersion` 还不够。
 
 ## 显示与互动
 
@@ -63,8 +63,8 @@
   （Cubism 3–5.3）。
 - **动画映射**：为五种状态与四个互动部位选择模型动作组；未配置槽位按默认候选
   链顺序尝试。非待机状态缺动作时不回退 `Idle`；`done` 只尝试 `Done`。
-- 本地模型不读任意 `file://`。设置里点「选择本地模型目录」授权后填目录内相对
-  路径，纹理、moc/moc3 与动作资源走同一个目录 grant。
+- 本地模型不读任意 `file://`。设置里点「选择本地模型文件」，选择入口后自动授权
+  其父目录并填入文件名；纹理、moc/moc3 与动作资源走同一个目录 grant。
 
 ### 下载 ds-h-v3 模型
 
@@ -77,8 +77,8 @@
 
 ### 配置自己的模型
 
-1. 在「我的模型」中点「选择本地模型目录」，选择包含模型及贴图、动作文件的目录。
-2. 填写目录内相对入口，例如 `ds-h-v3.model3.json`，保存并选用该模型；不要填写 `file://` URL。
+1. 在「我的模型」中点「选择本地模型文件」，选 `.model.json` 或 `.model3.json` 入口；同时允许插件读取其所在目录。
+2. 名称为空时从文件名自动填入，已有名称保留且可修改；确认后点「添加」并选用模型。编辑已有条目时用「重新选择模型文件」后点「保存」。取消选择不改变草稿；不要填写 `file://` URL。
 3. 在动画映射中，把状态或互动部位绑定到模型实际提供的动作组。
 
 以宣传图中的 ds-h-v3 为例：
