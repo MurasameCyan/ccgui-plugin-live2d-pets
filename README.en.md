@@ -6,9 +6,9 @@ A Live2D pet inside the CC GUI viewport. It follows the active AI session and su
 
 [简体中文](README.md) · [Download the plugin](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/releases/latest) · [Download ds-h-v3](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/releases/download/model-ds-h-v3-20261018/ds-h-v3-runtime.zip)
 
-[![CC GUI Live2D Pets: animated state and interaction showcase](docs/media/hero.gif)](docs/media/hero.mp4)
+[![CC GUI Live2D Pets: animated state and interaction showcase](https://raw.githubusercontent.com/MurasameCyan/ccgui-plugin-live2d-pets/main/docs/media/hero.gif)](https://raw.githubusercontent.com/MurasameCyan/ccgui-plugin-live2d-pets/main/docs/media/hero.mp4)
 
-[Watch the full-resolution MP4](docs/media/hero.mp4) · 24-second loop · No audio
+[Watch the full-resolution MP4](https://raw.githubusercontent.com/MurasameCyan/ccgui-plugin-live2d-pets/main/docs/media/hero.mp4) · 24-second loop · No audio
 
 > The showcase uses the separately imported **ds-h-v3** model. The UI and state timing are illustrative, not a recording of a live AI task. Model files are not bundled with the plugin. Singing poses and jumps require matching model motions and mappings; they are not universal model features.
 
@@ -36,6 +36,8 @@ A Live2D pet inside the CC GUI viewport. It follows the active AI session and su
 3. Enable the plugin and open its **Live2D Pets** settings to choose a model, size, and persona.
 
 No local build is required. The source repository root is not an installable plugin directory. For the current development version, use the package from [GitHub Actions](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/actions/workflows/package.yml). Install an updated directory with the same plugin ID to update the plugin. Releases are the published versions; `main` may contain unreleased changes.
+
+The host and plugin update separately: installing a new `self-build` application does not replace an installed plugin. If the old **Select local model directory** button remains, install the updated Actions plugin package; the new button selects a local model file. Installation packages include code, vendor runtimes and notices, READMEs, the icon, and static artwork only. Promotional GIF/MP4 files and development documentation remain online, outside the installation package.
 
 The host must provide **Plugin SDK ≥ 0.3.21**, including `assets.grantFile`, in addition to satisfying the manifest's minimum application version.
 

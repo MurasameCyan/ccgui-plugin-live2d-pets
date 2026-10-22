@@ -6,9 +6,9 @@
 
 [English](README.en.md) · [下载插件](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/releases/latest) · [下载 ds-h-v3 模型](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/releases/download/model-ds-h-v3-20261018/ds-h-v3-runtime.zip)
 
-[![CC GUI Live2D 桌宠动态演示：思考、工作、等待、完成与触摸互动](docs/media/hero.gif)](docs/media/hero.mp4)
+[![CC GUI Live2D 桌宠动态演示：思考、工作、等待、完成与触摸互动](https://raw.githubusercontent.com/MurasameCyan/ccgui-plugin-live2d-pets/main/docs/media/hero.gif)](https://raw.githubusercontent.com/MurasameCyan/ccgui-plugin-live2d-pets/main/docs/media/hero.mp4)
 
-[观看高清 MP4](docs/media/hero.mp4) · 24 秒循环演示 · 无音轨
+[观看高清 MP4](https://raw.githubusercontent.com/MurasameCyan/ccgui-plugin-live2d-pets/main/docs/media/hero.mp4) · 24 秒循环演示 · 无音轨
 
 > 宣传图使用单独下载并导入的 **ds-h-v3** 模型，左侧为状态示意，并非真实任务录屏。模型文件不包含在插件安装包中；唱歌姿态、跳跃等效果由模型动作提供，需要相应的动画映射，并非所有模型都自带。
 
@@ -19,6 +19,8 @@
 3. 启用插件，在「Live2D 桌宠」设置页选择模型、尺寸和人设。
 
 不需要本地编译；源码仓库根目录不是安装目录。需要主分支开发版本时，使用 [GitHub Actions](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/actions/workflows/package.yml) 的安装包。更新时安装同一插件 ID 的新目录即可；当前发行版本以 Releases 为准，主分支可能包含尚未发版的改动。
+
+宿主与插件分别更新：安装新的 `self-build` 应用不会替换已安装的插件。出现旧的「选择本地模型目录」按钮时，从上述 Actions 下载新插件包并重新安装；更新后应显示「选择本地模型文件」。插件包只含运行代码、vendor 运行时与许可、README、图标和静态截图，宣传 GIF／MP4 与开发文档留在仓库，不随包安装。
 
 需要宿主 **Plugin SDK ≥ 0.3.21**，提供 `ui:overlay`、资源桥、回合开始 hook、
 `session://activated` 与文件选择并授权父目录的 `assets.grantFile`。
@@ -169,9 +171,9 @@ Release 附件。
 
 ## 文档
 
-- [产品意图](docs/intent/live2d-pet-plugin.md)
-- [CC GUI 移植 ADR](docs/adr/011-ccgui-plugin-port.md)
-- [架构决策索引](docs/adr/)
+- [产品意图](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/blob/main/docs/intent/live2d-pet-plugin.md)
+- [CC GUI 移植 ADR](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/blob/main/docs/adr/011-ccgui-plugin-port.md)
+- [架构决策索引](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/tree/main/docs/adr/)
 
 ## 许可
 

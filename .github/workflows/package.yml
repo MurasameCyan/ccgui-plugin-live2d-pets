@@ -35,7 +35,8 @@ jobs:
           mkdir -p package/ccgui-plugin-live2d-pets
           cp dist/main.js dist/manifest.json README.md README.en.md LICENSE package/ccgui-plugin-live2d-pets/
           cp -R dist/vendor package/ccgui-plugin-live2d-pets/vendor
-          cp -R docs package/ccgui-plugin-live2d-pets/docs
+          mkdir -p package/ccgui-plugin-live2d-pets/docs/media
+          cp docs/media/hero.jpg package/ccgui-plugin-live2d-pets/docs/media/
           mkdir -p package/ccgui-plugin-live2d-pets/assets
           cp -R dist/icons package/ccgui-plugin-live2d-pets/assets/icons
           cd package

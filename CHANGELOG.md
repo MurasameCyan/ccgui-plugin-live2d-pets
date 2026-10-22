@@ -21,7 +21,7 @@
 
 - Refresh the plugin description and both READMEs with the CC GUI / ds-h-v3 animated showcase and a full-resolution MP4 link.
 - Document prebuilt Release/CI installation, model-specific work and jump mappings, spatial calibration, and configuration reload behavior. Keep unreleased sequential playback distinct from current-main behavior.
-- Include the bilingual READMEs, license, and linked documentation/media in both CI and Release installation packages.
+- Keep bilingual READMEs, licenses, the icon, and declared static artwork in CI and Release packages. Link promotional GIF/MP4 files and development documentation online instead of installing them; copying the complete docs tree had inflated the ZIP to 17.7 MiB.
 - Match the host's switch exactly. The settings toggles mirror
   `components/base/switch` at `size="sm"`, `shape="pill"` class-for-class
   instead of approximating it with hand-rolled inline styles, so track size,
@@ -30,6 +30,7 @@
 
 ### Fixed
 - Preserve the exact selected local filename through Add, Save, document reload and asset URL construction; leading spaces must not redirect to a different sibling file.
+- Publish the delivery correction as plugin 1.0.11 so the updated file picker is distinguishable from older installed 1.0.10 code. Document that updating the host alone does not update installed plugins.
 
 - Ignore fully transparent drawable hit areas before choosing a clicked body part, so hidden pose variants cannot steal clicks from the visible head, arms, body or legs.
 - Package the manifest icon at its declared repo-relative path. A marketplace
