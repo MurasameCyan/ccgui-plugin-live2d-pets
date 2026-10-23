@@ -37,7 +37,7 @@ A Live2D pet inside the CC GUI viewport. It follows the active AI session and su
 
 No local build is required. The source repository root is not an installable plugin directory. For the current development version, use the package from [GitHub Actions](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/actions/workflows/package.yml). Install an updated directory with the same plugin ID to update the plugin. Releases are the published versions; `main` may contain unreleased changes.
 
-The host and plugin update separately: installing a new `self-build` application does not replace an installed plugin. If the old **Select local model directory** button remains, install the updated Actions plugin package; the new button selects a local model file. Installation packages include code, vendor runtimes and notices, READMEs, the icon, and static artwork only. Promotional GIF/MP4 files and development documentation remain online, outside the installation package.
+The host and plugin update separately: installing a new `self-build` application does not replace an installed plugin. Install the updated Actions plugin package if the old directory picker or multi-line form remains. The new form contains only **Name | Model path (read-only text) | Browse | Save**. Installation packages include code, vendor runtimes and notices, READMEs, the icon, and static artwork only. Promotional GIF/MP4 files and development documentation remain online, outside the installation package.
 
 The host must provide **Plugin SDK ≥ 0.3.21**, including `assets.grantFile`, in addition to satisfying the manifest's minimum application version.
 
@@ -57,7 +57,8 @@ Build and packaging run in GitHub Actions. CI invokes `bun run validate` for typ
 
 - Curated models use `cdn.jsdelivr.net`, declared as an exact manifest network grant.
 - A different remote host requires a matching `network:<host>` permission in `manifest.json` and a new release.
-- Local models use the CC GUI asset-directory grant. Choose a `.model.json` or `.model3.json` file in settings; its parent directory is granted and its relative filename is filled automatically. Empty names are derived from the filename; existing names remain editable. Confirm with **Add** or **Save**; cancelling the picker leaves the draft unchanged. Sibling textures, moc/moc3, and motion assets use the same grant.
+- Local models use the CC GUI asset-directory grant. Click **Browse** to select a `.model.json` or `.model3.json` file; its parent directory is granted. The single-row form shows an editable name, the complete path as selectable read-only text, Browse, and Save. Empty names are derived from the filename; existing names remain editable. Long paths are ellipsized with the complete path in a hover tooltip. Confirm with **Save**; cancelling the picker leaves the draft unchanged. Escape exits an existing model's editor. Sibling textures, moc/moc3, and motion assets use the same grant.
+- Directory and relative-filename inputs, spatial controls, and motion-mapping controls are no longer shown. Existing `spatialTap` and `animationMap` data remain unchanged when renaming or browsing for a replacement model. Configure those overrides and remote model URLs through **Open configuration file** (`custom-models.jsonc`).
 - Users remain responsible for the license terms of custom models.
 
 ### Download the ds-h-v3 model
@@ -66,12 +67,12 @@ Build and packaging run in GitHub Actions. CI invokes `bun run validate` for typ
 
 - **30 files, 40.87 MB (38.98 MiB) unpacked**: model entry, compiled MOC3, 12 textures, 14 motions, physics, and display metadata.
 - **Runtime assets only.** No CMO/CMO3, CAN3, PSD/PSB editor projects, source artwork, or validation files are uploaded. Model assets are kept off the plugin's `main` branch and out of its installation package.
-- Extract the ZIP and keep the complete `ds-h-v3/` directory. In **My models**, choose `ds-h-v3.model3.json`, allow access to its parent directory, then confirm the filled name with **Add**. Do not copy just the entry file. **This ZIP is a model, not a plugin installer**; Cubism Editor is not required.
+- Extract the ZIP and keep the complete `ds-h-v3/` directory. In **My models**, click **Browse**, choose `ds-h-v3.model3.json`, allow access to its parent directory, then confirm the filled name with **Save**. Do not copy just the entry file. **This ZIP is a model, not a plugin installer**; Cubism Editor is not required.
 - GitHub Actions creates the ZIP and checksum. The model has a separate release tag and does not replace the plugin's latest release.
 
 ### Mapping the showcase model
 
-For ds-h-v3, map **Thinking → `Working`** to use its work/singing poses during a task, **Body → `TapJump`** for jumping, and **Done → `Done`** for completion. On the current main branch, selecting multiple motion groups specifies candidates, not a sequential playlist; selecting both `Thinking` and `Working` does not mean “play Thinking once, then Working.”
+For ds-h-v3, configure **Thinking → `Working`** to use its work/singing poses during a task, **Body → `TapJump`** for jumping, and **Done → `Done`** for completion in `custom-models.jsonc`. Multiple groups in one `animationMap` slot specify candidates, not a sequential playlist; configuring both `Thinking` and `Working` does not mean “play Thinking once, then Working.”
 
 If the apron is classified as legs, set the spatial zone's leg boundary (`legMinNy`) to `0.82`. This calibration is specific to ds-h-v3. Merge the following fields into its existing custom-model entry without replacing its ID, directory grant, or unrelated settings:
 

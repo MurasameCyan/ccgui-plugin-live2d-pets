@@ -2,32 +2,16 @@ import { createElement, useEffect, useRef, useState } from "../react-runtime";
 import type { ReactNode } from "../sdk";
 import type { PetRuntime, PetStateView } from "../runtime";
 import {
-  ANIMATION_SLOTS,
   isRemoteModelUrl,
   isSupportedModelLocation,
-  type AnimationSlot,
   type BuiltinPreset,
   type CustomModelEntry,
-  type MotionMap,
 } from "../models";
 import { PERSONAS_TEMPLATE } from "../persona-shared";
 import { builtinPersonaOptions } from "./personas";
-import {
-  EMPTY_SPATIAL_DRAFT,
-  SPATIAL_FIELD_LABELS,
-  draftFromMotionMap,
-  draftFromOverride,
-  motionMapFromDraft,
-  overrideFromDraft,
-  type SpatialTapDraft,
-} from "../settings-helpers";
 
 export interface PetSettingsProps { runtime: PetRuntime }
 
-type DraftSetter = (value: MotionMap | ((current: MotionMap) => MotionMap)) => void;
-type SpatialSetter = (value: SpatialTapDraft | ((current: SpatialTapDraft) => SpatialTapDraft)) => void;
-type EditorPanel = "spatial" | "motion" | null;
-type MotionStatus = "idle" | "loading" | "ready" | "error";
 const SIZE_WRITE_DEBOUNCE_MS = 120;
 
 const buttonStyle = {
@@ -54,8 +38,6 @@ const inputStyle = {
   color: "inherit",
 };
 const sectionTitleStyle = { margin: "16px 0 8px", fontSize: 13, fontWeight: 600, color: "#888" };
-const panelTabStyle = { ...buttonStyle, marginLeft: 0, padding: "4px 12px" };
-const panelTabActiveStyle = { ...panelTabStyle, background: "rgba(120,170,255,.26)", color: "#fff" };
 /** Host switch, mirrored class-for-class from `components/base/switch`
  *  (`size="sm"`, `shape="pill"` — what every host settings row uses). The
  *  plugin renders inside the host document, so these utilities already exist
@@ -339,17 +321,6 @@ function PersonaSelect(props: PersonaSelectProps): ReactNode {
   );
 }
 
-const ANIMATION_SLOT_LABELS: Record<AnimationSlot, string> = {
-  idle: "空闲",
-  thinking: "思考",
-  error: "出错",
-  done: "完成",
-  waiting: "等待审批",
-  head: "摸头",
-  leg: "摸腿",
-  arm: "摸手",
-  body: "摸身体",
-};
 
 function copyText(text: string): void {
   if (!text) return;
@@ -381,57 +352,50 @@ function newCustomModelId(): string {
   return `m-${crypto.randomUUID()}`;
 }
 
-function motionMapFields(
-  draft: MotionMap,
-  setDraft: DraftSetter,
-  groups: readonly string[],
-  status: MotionStatus,
-  disabled: boolean,
-): ReactNode {
-  const toggle = (slot: AnimationSlot, group: string, checked: boolean) => {
-    setDraft((current) => {
-      const next = { ...current };
-      const selected = new Set(next[slot] ?? []);
-      if (checked) selected.add(group); else selected.delete(group);
-      next[slot] = [...selected];
-      return next;
-    });
-  };
-  return createElement("div", null,
-    status === "loading" && createElement("div", { style: { color: "#888", fontSize: 12 } }, "正在解析动作组…"),
-    status === "error" && createElement("div", { style: { color: "#b45309", fontSize: 12 } }, "无法解析动画列表；模型仍可保存，稍后可重试。"),
-    status === "ready" && groups.length === 0 && createElement("div", { style: { color: "#888", fontSize: 12 } }, "模型没有可识别的动作组。"),
-    status === "ready" && groups.length > 0 && ANIMATION_SLOTS.map((slot) => createElement("div", { key: slot, style: { marginTop: 8 } },
-      createElement("div", { style: { fontSize: 12, marginBottom: 3 } }, ANIMATION_SLOT_LABELS[slot]),
-      createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, groups.map((group) => createElement("label", { key: `${slot}:${group}`, style: { fontSize: 12 } },
-        createElement("input", {
-          type: "checkbox",
-          checked: (draft[slot] ?? []).includes(group),
-          disabled,
-          onChange: (event: Event) => toggle(slot, group, (event.currentTarget as HTMLInputElement).checked),
-        }),
-        ` ${group}`,
-      ))),
-    )),
-  );
+function modelDisplayPath(modelUrl: string, directoryGrantId?: string, directoryPath?: string): string {
+  if (!directoryGrantId || !directoryPath || isRemoteModelUrl(modelUrl)) return modelUrl;
+  const separator = modelUrl.includes("\\") ? "\\" : "/";
+  return `${modelUrl.replace(/[\\/]+$/, "")}${separator}${directoryPath.replace(/[\\/]/g, separator)}`;
 }
 
-function spatialFields(draft: SpatialTapDraft, setDraft: SpatialSetter, disabled: boolean): ReactNode {
-  return createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 } },
-    SPATIAL_FIELD_LABELS.map(({ key, label, hint }) => createElement("label", { key, style: { display: "flex", flexDirection: "column", gap: 3, fontSize: 11 } },
-      `${label} (${hint})`,
-      createElement("input", {
-        ...inputStyle,
-        type: "number",
-        min: 0,
-        max: 1,
-        step: 0.01,
-        placeholder: "默认",
-        value: draft[key],
-        disabled,
-        onChange: (event: Event) => setDraft((current) => ({ ...current, [key]: (event.currentTarget as HTMLInputElement).value })),
-      }),
-    )),
+function ModelForm(props: {
+  label: "新增模型" | "编辑模型";
+  name: string;
+  path: string;
+  disabled: boolean;
+  onNameChange: (value: string) => void;
+  onBrowse: () => void;
+  onSave: () => void;
+  onCancel?: () => void;
+}): ReactNode {
+  return createElement("div", {
+    role: "group",
+    "aria-label": props.label,
+    style: { ...rowStyle, display: "grid", gridTemplateColumns: "minmax(72px, 1fr) minmax(0, 2fr) auto", alignItems: "center", gap: 8 },
+    onKeyDown: (event: KeyboardEvent) => {
+      if (event.key === "Escape" && props.onCancel) {
+        event.preventDefault();
+        props.onCancel();
+      }
+    },
+  },
+    createElement("input", {
+      style: { ...inputStyle, minWidth: 0, width: "100%", boxSizing: "border-box" },
+      value: props.name,
+      placeholder: "名称",
+      "aria-label": "名称",
+      disabled: props.disabled,
+      onChange: (event: Event) => props.onNameChange((event.currentTarget as HTMLInputElement).value),
+    }),
+    createElement("span", {
+      "aria-label": "模型路径",
+      title: props.path || "未选择模型",
+      style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "text", fontSize: 12 },
+    }, props.path || "未选择模型"),
+    createElement("span", { style: { display: "flex", gap: 6, paddingLeft: 8, borderLeft: "1px solid rgba(128,128,128,.3)" } },
+      createElement("button", { type: "button", style: { ...buttonStyle, marginLeft: 0, whiteSpace: "nowrap" }, disabled: props.disabled, onClick: props.onBrowse }, "浏览"),
+      createElement("button", { type: "button", style: { ...buttonStyle, marginLeft: 0, whiteSpace: "nowrap" }, disabled: props.disabled, onClick: props.onSave }, "保存"),
+    ),
   );
 }
 
@@ -467,24 +431,12 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [newGrantId, setNewGrantId] = useState<string | undefined>(undefined);
-  const [newGrantPath, setNewGrantPath] = useState("");
   const [newDirectoryPath, setNewDirectoryPath] = useState("");
-  const [newSpatial, setNewSpatial] = useState<SpatialTapDraft>({ ...EMPTY_SPATIAL_DRAFT });
-  const [newMotion, setNewMotion] = useState<MotionMap>({});
-  const [newGroups, setNewGroups] = useState<string[]>([]);
-  const [newMotionStatus, setNewMotionStatus] = useState<MotionStatus>("idle");
-  const [newPanel, setNewPanel] = useState<EditorPanel>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editUrl, setEditUrl] = useState("");
   const [editGrantId, setEditGrantId] = useState<string | undefined>(undefined);
-  const [editGrantPath, setEditGrantPath] = useState("");
   const [editDirectoryPath, setEditDirectoryPath] = useState("");
-  const [editSpatial, setEditSpatial] = useState<SpatialTapDraft>({ ...EMPTY_SPATIAL_DRAFT });
-  const [editMotion, setEditMotion] = useState<MotionMap>({});
-  const [editGroups, setEditGroups] = useState<string[]>([]);
-  const [editMotionStatus, setEditMotionStatus] = useState<MotionStatus>("idle");
-  const [editPanel, setEditPanel] = useState<EditorPanel>(null);
   const writeQueue = useRef(Promise.resolve());
   const sizeWriteTimer = useRef<number | undefined>(undefined);
   const pendingSize = useRef<number | null>(null);
@@ -546,96 +498,38 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     });
   };
 
-  const changeModelUrl = (target: "new" | "edit", value: string): void => {
-    // A manually edited address is a new source, not an alias for the old grant.
-    directoryRequests.current[target] += 1;
-    if (target === "new") {
-      setNewUrl(value);
-      setNewGrantId(undefined);
-      setNewGrantPath("");
-      setNewDirectoryPath("");
-    } else {
-      setEditUrl(value);
-      setEditGrantId(undefined);
-      setEditGrantPath("");
-      setEditDirectoryPath("");
-    }
-    setNotice(null);
-  };
 
   const pickModelFile = (target: "new" | "edit"): void => {
     const request = ++directoryRequests.current[target];
+    setNotice(null);
     void runtime.grantFile().then((grant) => {
       if (directoryRequests.current[target] !== request || grant === null) return;
       const name = grant.relativePath.replace(/(?:\.model3?)?\.json$/i, "");
       if (target === "new") {
         setNewName((current) => current.trim() ? current : name);
         setNewGrantId(grant.grantId);
-        setNewGrantPath(grant.path);
         setNewUrl(grant.path);
         setNewDirectoryPath(grant.relativePath);
       } else {
         setEditName((current) => current.trim() ? current : name);
         setEditGrantId(grant.grantId);
-        setEditGrantPath(grant.path);
         setEditUrl(grant.path);
         setEditDirectoryPath(grant.relativePath);
       }
-      setNotice(`模型文件已选择，所在目录已授权；确认名称后点击“${target === "new" ? "添加" : "保存"}”。`);
     }).catch((error) => {
       if (directoryRequests.current[target] !== request) return;
       setNotice(`本地模型选择失败：${error instanceof Error ? error.message : String(error)}`);
     });
   };
 
-  const newCandidate = modelEntry("preview", newName || "preview", newUrl, newGrantId, newDirectoryPath);
   const editCandidate = editId ? modelEntry(editId, editName || editId, editUrl, editGrantId, editDirectoryPath) : null;
 
-  useEffect(() => {
-    if (newPanel !== "motion" || !newCandidate) {
-      setNewMotionStatus("idle");
-      setNewGroups([]);
-      return;
-    }
-    let alive = true;
-    setNewMotionStatus("loading");
-    void runtime.fetchMotionGroups(newCandidate).then((groups) => {
-      if (!alive) return;
-      setNewGroups(groups);
-      setNewMotionStatus("ready");
-    }).catch(() => {
-      if (!alive) return;
-      setNewGroups([]);
-      setNewMotionStatus("error");
-    });
-    return () => { alive = false; };
-  }, [newPanel, newUrl, newGrantId, newDirectoryPath, runtime]);
-
-  useEffect(() => {
-    if (editPanel !== "motion" || !editCandidate) {
-      setEditMotionStatus("idle");
-      setEditGroups([]);
-      return;
-    }
-    let alive = true;
-    setEditMotionStatus("loading");
-    void runtime.fetchMotionGroups(editCandidate).then((groups) => {
-      if (!alive) return;
-      setEditGroups(groups);
-      setEditMotionStatus("ready");
-    }).catch(() => {
-      if (!alive) return;
-      setEditGroups([]);
-      setEditMotionStatus("error");
-    });
-    return () => { alive = false; };
-  }, [editPanel, editUrl, editGrantId, editDirectoryPath, runtime]);
   const modelIsAllowed = (entry: CustomModelEntry): boolean => {
     try {
       runtime.modelAssetUrl(entry);
       return true;
     } catch {
-      setNotice("该远程模型域名未获插件权限；请使用 jsDelivr 或选择本地模型文件。");
+      setNotice("该远程模型域名未获插件权限；请使用 jsDelivr 或浏览选择本地模型文件。");
       return false;
     }
   };
@@ -643,16 +537,16 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
   const addModel = (): void => {
     const candidate = modelEntry(newCustomModelId(), newName, newUrl, newGrantId, newDirectoryPath);
     if (!candidate || !modelIsAllowed(candidate)) {
-      if (!candidate) setNotice("请填写名称与可访问的模型地址，或选择本地模型文件自动填入。");
+      if (!candidate) setNotice("请填写名称并浏览选择模型文件。");
       return;
     }
-    const spatialTap = overrideFromDraft(newSpatial);
-    const animationMap = motionMapFromDraft(newMotion);
-    if (spatialTap) candidate.spatialTap = spatialTap;
-    if (animationMap) candidate.animationMap = animationMap;
     saveModels((current) => [...current, candidate]);
-    setNewName(""); changeModelUrl("new", "");
-    setNewSpatial({ ...EMPTY_SPATIAL_DRAFT }); setNewMotion({}); setNewPanel(null);
+    directoryRequests.current.new += 1;
+    setNewName("");
+    setNewUrl("");
+    setNewGrantId(undefined);
+    setNewDirectoryPath("");
+    setNotice(null);
   };
 
   const beginEdit = (entry: CustomModelEntry): void => {
@@ -661,31 +555,29 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
     setEditName(entry.name);
     setEditUrl(entry.modelUrl);
     setEditGrantId(entry.directoryGrantId);
-    setEditGrantPath(entry.directoryGrantId ? entry.modelUrl : "");
     setEditDirectoryPath(entry.directoryPath ?? "");
-    setEditSpatial(draftFromOverride(entry.spatialTap));
-    setEditMotion(draftFromMotionMap(entry.animationMap));
-    setEditPanel(null);
-    setEditMotionStatus("idle");
   };
 
   const cancelEdit = (): void => {
     directoryRequests.current.edit += 1;
     setEditId(null);
-    setEditPanel(null);
   };
 
   const saveEdit = (): void => {
     if (!editId || !editCandidate || !modelIsAllowed(editCandidate)) {
-      if (!editId || !editCandidate) setNotice("请填写名称与可访问的模型地址。");
+      if (!editId || !editCandidate) setNotice("请填写名称并浏览选择模型文件。");
       return;
     }
-    const spatialTap = overrideFromDraft(editSpatial);
-    const animationMap = motionMapFromDraft(editMotion);
-    const updated: CustomModelEntry = { ...editCandidate };
-    if (spatialTap) updated.spatialTap = spatialTap;
-    if (animationMap) updated.animationMap = animationMap;
-    saveModels((current) => current.map((entry) => entry.id === editId ? updated : entry));
+    saveModels((current) => current.map((entry) => {
+      if (entry.id !== editId) return entry;
+      const updated: CustomModelEntry = { ...entry, ...editCandidate };
+      if (!editCandidate.directoryGrantId) {
+        delete updated.directoryGrantId;
+        delete updated.directoryPath;
+      }
+      return updated;
+    }));
+    setNotice(null);
     cancelEdit();
   };
 
@@ -769,31 +661,22 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
   }));
   const customRows = view.customModels.map((entry) => {
     if (editId === entry.id) {
-      return createElement("div", { key: entry.id, style: { ...rowStyle, display: "flex", flexDirection: "column", gap: 6 } },
-        createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          createElement("input", { style: inputStyle, value: editName, placeholder: "名称", onChange: (event: Event) => setEditName((event.currentTarget as HTMLInputElement).value) }),
-          createElement("input", { style: { ...inputStyle, flex: 1 }, value: editUrl, placeholder: "https://…/model.json 或 model3.json，或已授权目录", onChange: (event: Event) => changeModelUrl("edit", (event.currentTarget as HTMLInputElement).value) }),
-          createElement("button", { style: buttonStyle, onClick: saveEdit }, "保存"),
-          createElement("button", { style: buttonStyle, onClick: cancelEdit }, "取消"),
-        ),
-        createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          createElement("button", { style: panelTabStyle, onClick: () => pickModelFile("edit") }, "重新选择模型文件"),
-          editGrantPath && createElement("span", { style: { fontSize: 11, color: "#888", alignSelf: "center", wordBreak: "break-all" } }, editGrantPath),
-          editGrantId && createElement("input", { style: { ...inputStyle, flex: 1 }, value: editDirectoryPath, placeholder: "目录内相对 .model.json 或 .model3.json 路径", onChange: (event: Event) => setEditDirectoryPath((event.currentTarget as HTMLInputElement).value) }),
-        ),
-        createElement("div", { style: { display: "flex", gap: 4 } },
-          createElement("button", { style: editPanel === "spatial" ? panelTabActiveStyle : panelTabStyle, onClick: () => setEditPanel(editPanel === "spatial" ? null : "spatial") }, "空间分区覆盖"),
-          createElement("button", { style: editPanel === "motion" ? panelTabActiveStyle : panelTabStyle, onClick: () => setEditPanel(editPanel === "motion" ? null : "motion") }, "动画映射"),
-        ),
-        editPanel === "spatial" && spatialFields(editSpatial, setEditSpatial, !writable),
-        editPanel === "motion" && motionMapFields(editMotion, setEditMotion, editGroups, editMotionStatus, !writable),
-      );
+      return createElement(ModelForm, {
+        key: entry.id,
+        label: "编辑模型",
+        name: editName,
+        path: modelDisplayPath(editUrl, editGrantId, editDirectoryPath),
+        disabled: !writable,
+        onNameChange: setEditName,
+        onBrowse: () => pickModelFile("edit"),
+        onSave: saveEdit,
+        onCancel: cancelEdit,
+      });
     }
-    const flags = [entry.spatialTap && "分区已覆盖", entry.animationMap && "动画已映射"].filter(Boolean).join(" · ");
     return createElement(ModelRow, {
       key: entry.id,
       selected: view.config.model === entry.id,
-      label: `${entry.name}${flags ? ` · ${flags}` : ""}`,
+      label: entry.name,
       disabled: !writable,
       onSelect: () => write("model", entry.id),
       actions: createElement("span", null,
@@ -813,24 +696,15 @@ export function PetSettingsSection(props: PetSettingsProps): ReactNode {
       ),
       view.customModelsError && createElement("div", { style: { color: "#b45309", fontSize: 12, marginBottom: 6 } }, view.customModelsError),
       createElement("div", { role: "radiogroup", "aria-label": "我的模型" }, customRows.length ? customRows : createElement("div", { style: { ...rowStyle, color: "#888", fontSize: 12 } }, "尚未添加自定义模型")),
-      createElement("div", { style: { ...rowStyle, display: "flex", flexDirection: "column", gap: 6 } },
-        createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          createElement("input", { style: inputStyle, value: newName, placeholder: "名称", disabled: !writable, onChange: (event: Event) => setNewName((event.currentTarget as HTMLInputElement).value) }),
-          createElement("input", { style: { ...inputStyle, flex: 1 }, value: newUrl, placeholder: "https://…/model.json 或 model3.json，或已授权目录", disabled: !writable, onChange: (event: Event) => changeModelUrl("new", (event.currentTarget as HTMLInputElement).value) }),
-          createElement("button", { style: buttonStyle, disabled: !writable, onClick: addModel }, "添加"),
-        ),
-        createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          createElement("button", { style: panelTabStyle, disabled: !writable, onClick: () => pickModelFile("new") }, "选择本地模型文件"),
-          newGrantPath && createElement("span", { style: { fontSize: 11, color: "#888", alignSelf: "center", wordBreak: "break-all" } }, newGrantPath),
-          newGrantId && createElement("input", { style: { ...inputStyle, flex: 1 }, value: newDirectoryPath, placeholder: "目录内相对 .model.json 或 .model3.json 路径", disabled: !writable, onChange: (event: Event) => setNewDirectoryPath((event.currentTarget as HTMLInputElement).value) }),
-        ),
-        createElement("div", { style: { display: "flex", gap: 4 } },
-          createElement("button", { style: newPanel === "spatial" ? panelTabActiveStyle : panelTabStyle, disabled: !writable, onClick: () => setNewPanel(newPanel === "spatial" ? null : "spatial") }, "空间分区覆盖"),
-          createElement("button", { style: newPanel === "motion" ? panelTabActiveStyle : panelTabStyle, disabled: !writable, onClick: () => setNewPanel(newPanel === "motion" ? null : "motion") }, "动画映射"),
-        ),
-        newPanel === "spatial" && spatialFields(newSpatial, setNewSpatial, !writable),
-        newPanel === "motion" && motionMapFields(newMotion, setNewMotion, newGroups, newMotionStatus, !writable),
-      ),
+      createElement(ModelForm, {
+        label: "新增模型",
+        name: newName,
+        path: modelDisplayPath(newUrl, newGrantId, newDirectoryPath),
+        disabled: !writable,
+        onNameChange: setNewName,
+        onBrowse: () => pickModelFile("new"),
+        onSave: addModel,
+      }),
     ),
   );
 

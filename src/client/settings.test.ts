@@ -12,9 +12,6 @@ import { makeContext } from "../test-context";
 import { PetSettingsSection } from "./settings";
 
 const REMOTE_URL = "https://cdn.jsdelivr.net/models/remote.model3.json";
-const NEW_URL_FIELD = "https://…/model.json 或 model3.json，或已授权目录";
-const EDIT_URL_FIELD = "https://…/model.json 或 model3.json，或已授权目录";
-const RELATIVE_PATH_FIELD = "目录内相对 .model.json 或 .model3.json 路径";
 const LOCAL_MODEL: CustomModelEntry = {
   id: "local-pet", name: "Local pet", modelUrl: "C:/models",
   directoryGrantId: "grant", directoryPath: "Pet/Pet.model3.json",
@@ -56,6 +53,21 @@ function customRows(container: ParentNode): HTMLElement {
   return container.querySelector<HTMLElement>('[role="radiogroup"][aria-label="我的模型"]')!;
 }
 
+function modelForm(container: ParentNode, mode: "new" | "edit" = "new"): HTMLElement {
+  const label = mode === "new" ? "新增模型" : "编辑模型";
+  return container.querySelector<HTMLElement>(`[role="group"][aria-label="${label}"]`)!;
+}
+
+function modelPath(container: ParentNode): string {
+  return container.querySelector<HTMLElement>('[aria-label="模型路径"]')!.textContent!;
+}
+
+async function cancelModelEdit(container: ParentNode): Promise<void> {
+  await act(async () => {
+    modelForm(container, "edit").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+}
+
 async function mountSettings(models: CustomModelEntry[] = [], selected?: string, personas: CustomPersonaDef[] = []) {
   const harness = makeContext();
   harness.documents.set("custom-models.jsonc", { content: JSON.stringify({ models }), version: "initial-models" });
@@ -86,7 +98,7 @@ async function mountSettings(models: CustomModelEntry[] = [], selected?: string,
 
 async function fillLocalDraft(container: ParentNode) {
   await type(container, "名称", "New pet");
-  await click(container, "选择本地模型文件");
+  await click(modelForm(container), "浏览");
 }
 
 describe("pet settings model sources", () => {
@@ -102,19 +114,18 @@ describe("pet settings model sources", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each(["Haru.model3.json", "Shizuku.model.json"])("fills an empty local draft from %s and waits for Add", async (relativePath) => {
+  it.each(["Haru.model3.json", "Shizuku.model.json"])("fills an empty local draft from %s and waits for Save", async (relativePath) => {
     const { container, ctx, runtime, savedModels } = await mountSettings();
     Object.assign(ctx.assets, {
       grantFile: async () => ({ grantId: "picked-file", path: "C:/models/Haru", relativePath }),
     });
-    await click(container, "选择本地模型文件");
+    await click(container, "浏览");
     const name = relativePath.replace(/\.model3?\.json$/i, "");
     expect(field(container, "名称").value).toBe(name);
-    expect(field(container, NEW_URL_FIELD).value).toBe("C:/models/Haru");
-    expect(field(container, RELATIVE_PATH_FIELD).value).toBe(relativePath);
+    expect(modelPath(modelForm(container))).toBe(`C:/models/Haru/${relativePath}`);
     expect(savedModels()).toEqual([]);
     await type(container, "名称", "My pet");
-    await click(container, "添加");
+    await click(modelForm(container), "保存");
     const saved = savedModels()[0]!;
     expect(saved).toEqual({
       id: expect.any(String), name: "My pet", modelUrl: "C:/models/Haru",
@@ -124,19 +135,19 @@ describe("pet settings model sources", () => {
     expect(runtime.snapshot().config.modelUrl).toBe(`plugin://directory/picked-file/${relativePath}`);
   });
 
-  it("preserves leading whitespace in a selected filename through Add, Save and reload", async () => {
+  it("preserves leading whitespace in a selected filename through Save and reload", async () => {
     const relativePath = " Haru.model3.json";
     const { container, ctx, runtime, savedModels, grantFile, unmount } = await mountSettings();
     grantFile.mockResolvedValueOnce({ grantId: "space-file", path: "C:/models", relativePath });
-    await click(container, "选择本地模型文件");
-    await click(container, "添加");
+    await click(modelForm(container), "浏览");
+    await click(modelForm(container), "保存");
     const saved = savedModels()[0]!;
     expect(saved.directoryPath).toBe(relativePath);
     await act(async () => { await runtime.setSettings([{ op: "set", path: ["model"], value: saved.id }]); });
     const expectedUrl = `plugin://directory/space-file/${relativePath}`;
     expect(runtime.snapshot().config.modelUrl).toBe(expectedUrl);
     await click(customRows(container), "修改");
-    await click(container, "保存");
+    await click(customRows(container), "保存");
     expect(savedModels()[0]!.directoryPath).toBe(relativePath);
     await act(async () => unmount());
     const reloaded = new PetRuntime(ctx);
@@ -155,24 +166,25 @@ describe("pet settings model sources", () => {
       grantFile: async () => ({ grantId: "picked-file", path: "C:/models/Haru", relativePath: "Haru.model3.json" }),
     });
     await type(container, "名称", "Custom name");
-    await click(container, "选择本地模型文件");
+    await click(modelForm(container), "浏览");
     expect(field(container, "名称").value).toBe("Custom name");
-    await click(container, "添加");
+    await click(modelForm(container), "保存");
     expect(savedModels()[0]).toMatchObject({ name: "Custom name", directoryPath: "Haru.model3.json" });
   });
 
-  it("preserves the current draft when file selection is cancelled", async () => {
-    const { container, ctx, savedModels } = await mountSettings();
-    Object.assign(ctx.assets, { grantFile: async () => null });
-    await type(container, "名称", "Still remote");
-    await type(container, NEW_URL_FIELD, REMOTE_URL);
-    await click(container, "选择本地模型文件");
-    expect(field(container, "名称").value).toBe("Still remote");
-    expect(field(container, NEW_URL_FIELD).value).toBe(REMOTE_URL);
-    expect(container.querySelector(`input[placeholder="${RELATIVE_PATH_FIELD}"]`)).toBeNull();
+  it("preserves the selected local draft when file selection is cancelled", async () => {
+    const { container, grantFile, savedModels } = await mountSettings();
+    await fillLocalDraft(container);
+    grantFile.mockResolvedValueOnce(null);
+    await click(modelForm(container), "浏览");
+    expect(field(modelForm(container), "名称").value).toBe("New pet");
+    expect(modelPath(modelForm(container))).toBe("C:/models/Pet.model3.json");
     expect(savedModels()).toEqual([]);
-    await click(container, "添加");
-    expect(savedModels()).toEqual([{ id: expect.any(String), name: "Still remote", modelUrl: REMOTE_URL }]);
+    await click(modelForm(container), "保存");
+    expect(savedModels()).toEqual([{
+      id: expect.any(String), name: "New pet", modelUrl: "C:/models",
+      directoryGrantId: "grant", directoryPath: "Pet.model3.json",
+    }]);
   });
 
   it("uses the host menu styling for persona choices and persists a selection", async () => {
@@ -303,45 +315,11 @@ describe("pet settings model sources", () => {
   });
 
 
-  it("lists a legacy model entry without marking it unsupported", async () => {
-    const legacy: CustomModelEntry = {
-      id: "legacy-pet", name: "Legacy", modelUrl: "C:/legacy",
-      directoryGrantId: "grant", directoryPath: "Shizuku/model.json",
-    };
-    const { container } = await mountSettings([legacy]);
-    expect(customRows(container).textContent).toContain("Legacy");
-    expect(customRows(container).textContent).not.toContain("不受支持");
-  });
-
-  it("maps legacy motion groups and keeps their spelling after saving", async () => {
-    const legacy: CustomModelEntry = {
-      id: "legacy-pet", name: "Legacy", modelUrl: "C:/legacy",
-      directoryGrantId: "grant", directoryPath: "Shizuku/model.json",
-    };
-    vi.stubGlobal("fetch", vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ model: "model.moc", textures: [], motions: {
-        idle: [{ file: "idle.mtn" }], tap_body: [{ file: "touch.mtn" }],
-      } }),
-    })));
-    const { container, runtime, savedModels } = await mountSettings([legacy], legacy.id);
-    await click(customRows(container), "修改");
-    await click(customRows(container), "动画映射");
-    const label = [...customRows(container).querySelectorAll("label")].find((node) =>
-      node.textContent?.trim() === "tap_body" && node.parentElement?.previousElementSibling?.textContent === "摸身体",
-    );
-    expect(label, "legacy body motion choice").toBeDefined();
-    await act(async () => { label!.querySelector<HTMLInputElement>("input")!.click(); });
-    await click(customRows(container), "保存");
-    expect(savedModels()[0]?.animationMap).toEqual({ body: ["tap_body"] });
-    expect(runtime.snapshot().config.modelUrl).toBe("plugin://directory/grant/Shizuku/model.json");
-    expect(runtime.snapshot().config.motionMap.body).toEqual(["tap_body"]);
-  });
 
   it("adds a selected local file and retains its source after reload", async () => {
     const { container, runtime, savedModels, ctx, unmount } = await mountSettings();
     await fillLocalDraft(container);
-    await click(container, "添加");
+    await click(modelForm(container), "保存");
     expect(savedModels()).toHaveLength(1);
     const saved = savedModels()[0]!;
     expect(saved).toMatchObject({ name: "New pet", modelUrl: "C:/models", directoryGrantId: "grant", directoryPath: "Pet.model3.json" });
@@ -354,47 +332,33 @@ describe("pet settings model sources", () => {
     expect(reloaded.snapshot().config.modelUrl).toBe("plugin://directory/grant/Pet.model3.json");
   });
 
-  it("adds the newly typed remote URL without retaining an earlier directory source", async () => {
-    const { container, savedModels, revokeDirectory } = await mountSettings();
-    await fillLocalDraft(container);
-    await type(container, NEW_URL_FIELD, REMOTE_URL);
-    await click(container, "添加");
-    expect(savedModels()).toEqual([{ id: expect.any(String), name: "New pet", modelUrl: REMOTE_URL }]);
-    // Switching a draft must not revoke a grant potentially shared by other models.
-    expect(revokeDirectory).not.toHaveBeenCalled();
-  });
-
-  it("changes a selected local model to remote and persists that source across reload", async () => {
-    const { container, runtime, savedModels, ctx, unmount } = await mountSettings([LOCAL_MODEL], LOCAL_MODEL.id);
-    await click(customRows(container), "修改");
-    await type(container, EDIT_URL_FIELD, REMOTE_URL);
-    await click(container, "保存");
-    expect(runtime.snapshot().config.modelUrl).toBe(REMOTE_URL);
-    expect(savedModels()).toEqual([{
-      id: LOCAL_MODEL.id, name: LOCAL_MODEL.name, modelUrl: REMOTE_URL,
-      spatialTap: LOCAL_MODEL.spatialTap, animationMap: LOCAL_MODEL.animationMap,
-    }]);
-    await act(async () => unmount());
-    const reloaded = new PetRuntime(ctx);
-    cleanups.push(() => reloaded.dispose());
-    await reloaded.ready;
-    expect(reloaded.snapshot().config.modelUrl).toBe(REMOTE_URL);
-  });
-
   it("keeps the directory source and mappings when only a local model name changes", async () => {
     const { container, runtime, savedModels } = await mountSettings([LOCAL_MODEL], LOCAL_MODEL.id);
     await click(customRows(container), "修改");
     await type(customRows(container), "名称", "Renamed pet");
-    await click(container, "保存");
+    await click(customRows(container), "保存");
     expect(savedModels()).toEqual([{ ...LOCAL_MODEL, name: "Renamed pet" }]);
     expect(runtime.snapshot().config.modelUrl).toBe("plugin://directory/grant/Pet/Pet.model3.json");
+  });
+
+  it("keeps legacy overrides unchanged when only a model name changes", async () => {
+    const legacy: CustomModelEntry = {
+      ...LOCAL_MODEL,
+      spatialTap: { armLeftMaxNx: 0.35, armRightMinNx: 0.7 },
+      animationMap: { body: ["tap_body"], thinking: ["Work"] },
+    };
+    const { container, savedModels } = await mountSettings([legacy]);
+    await click(customRows(container), "修改");
+    await type(customRows(container), "名称", "Renamed legacy");
+    await click(customRows(container), "保存");
+    expect(savedModels()).toEqual([{ ...legacy, name: "Renamed legacy" }]);
   });
 
   it("drops stale directory fields when saving an older mixed-source remote entry", async () => {
     const mixed = { ...REMOTE_MODEL, directoryGrantId: "old-grant", directoryPath: "Old.model3.json" };
     const { container, runtime, savedModels } = await mountSettings([mixed], mixed.id);
     await click(customRows(container), "修改");
-    await click(container, "保存");
+    await click(customRows(container), "保存");
     expect(savedModels()).toEqual([REMOTE_MODEL]);
     expect(runtime.snapshot().config.modelUrl).toBe(REMOTE_URL);
   });
@@ -403,74 +367,40 @@ describe("pet settings model sources", () => {
     const { container, runtime, savedModels, grantFile } = await mountSettings([REMOTE_MODEL], REMOTE_MODEL.id);
     grantFile.mockResolvedValueOnce({ grantId: "other-file", path: "C:/models/Other", relativePath: "Other.model3.json" });
     await click(customRows(container), "修改");
-    await click(container, "重新选择模型文件");
-    expect(field(container, RELATIVE_PATH_FIELD).value).toBe("Other.model3.json");
-    await click(container, "保存");
+    await click(customRows(container), "浏览");
+    expect(modelPath(modelForm(container, "edit"))).toBe("C:/models/Other/Other.model3.json");
+    await click(customRows(container), "保存");
     expect(savedModels()).toEqual([{
       ...REMOTE_MODEL, modelUrl: "C:/models/Other", directoryGrantId: "other-file", directoryPath: "Other.model3.json",
     }]);
     expect(runtime.snapshot().config.modelUrl).toBe("plugin://directory/other-file/Other.model3.json");
   });
 
-  it("checks a remote URL against the SDK even after a local directory was selected", async () => {
-    const { container, savedModels, remoteUrl } = await mountSettings();
-    const deniedUrl = "https://ungranted.test/Pet.model3.json";
-    remoteUrl.mockImplementation((url) => {
-      if (url === deniedUrl) throw new Error("missing network permission");
-      return url;
-    });
-    await fillLocalDraft(container);
-    await type(container, NEW_URL_FIELD, deniedUrl);
-    await click(container, "添加");
-    expect(savedModels()).toEqual([]);
-    expect(remoteUrl).toHaveBeenCalledWith(deniedUrl);
-    expect(container.textContent).toContain("该远程模型域名未获插件权限");
-  });
-
-  it("requires a new directory selection after the displayed local path is manually changed", async () => {
-    const { container, savedModels } = await mountSettings([LOCAL_MODEL]);
+  it("rejects saving a configured remote model whose domain is not granted", async () => {
+    const denied = { ...REMOTE_MODEL, modelUrl: "https://ungranted.test/Pet.model3.json" };
+    const { container, savedModels, remoteUrl } = await mountSettings([denied]);
+    remoteUrl.mockImplementation(() => { throw new Error("missing network permission"); });
     await click(customRows(container), "修改");
-    await type(container, EDIT_URL_FIELD, "D:/different-models");
-    await click(container, "保存");
-    expect(savedModels()).toEqual([LOCAL_MODEL]);
-    expect(container.textContent).toContain("请填写名称与可访问的模型地址");
+    await type(customRows(container), "名称", "Denied rename");
+    await click(customRows(container), "保存");
+    expect(savedModels()).toEqual([denied]);
+    expect(modelForm(container, "edit")).not.toBeNull();
   });
 
-  it("previews motion groups from the current remote draft, not the previous directory", async () => {
-    const { container } = await mountSettings();
-    await fillLocalDraft(container);
-    await type(container, NEW_URL_FIELD, REMOTE_URL);
-    await click(container, "动画映射");
-    expect(fetch).toHaveBeenCalledWith(REMOTE_URL);
-    expect(container.textContent).toContain("TapHead");
-  });
 
   it("preserves a remote draft when file selection fails", async () => {
     const { container, savedModels, grantFile } = await mountSettings([REMOTE_MODEL]);
     grantFile.mockRejectedValueOnce(new Error("picker-unavailable"));
     await click(customRows(container), "修改");
     await type(customRows(container), "名称", "Still remote");
-    await click(container, "重新选择模型文件");
-    expect(field(container, EDIT_URL_FIELD).value).toBe(REMOTE_URL);
+    await click(customRows(container), "浏览");
+    expect(modelPath(modelForm(container, "edit"))).toBe(REMOTE_URL);
     expect(field(customRows(container), "名称").value).toBe("Still remote");
     expect(container.textContent).toContain("picker-unavailable");
-    await click(container, "保存");
+    await click(customRows(container), "保存");
     expect(savedModels()).toEqual([{ ...REMOTE_MODEL, name: "Still remote" }]);
   });
 
-  it("ignores a file result that arrives after the draft URL changes", async () => {
-    const { container, grantFile, savedModels } = await mountSettings();
-    const pending = deferred<AssetFileGrant>();
-    grantFile.mockReturnValueOnce(pending.promise);
-    await type(container, "名称", "New pet");
-    await click(container, "选择本地模型文件");
-    await type(container, NEW_URL_FIELD, REMOTE_URL);
-    await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" }));
-    expect(field(container, NEW_URL_FIELD).value).toBe(REMOTE_URL);
-    expect(container.querySelector(`input[placeholder="${RELATIVE_PATH_FIELD}"]`)).toBeNull();
-    await click(container, "添加");
-    expect(savedModels()).toEqual([{ id: expect.any(String), name: "New pet", modelUrl: REMOTE_URL }]);
-  });
 
   it("uses the latest file selection when picker requests finish out of order", async () => {
     const { container, grantFile, savedModels } = await mountSettings();
@@ -478,13 +408,12 @@ describe("pet settings model sources", () => {
     const second = deferred<AssetFileGrant>();
     grantFile.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     await type(container, "名称", "New pet");
-    await click(container, "选择本地模型文件");
-    await click(container, "选择本地模型文件");
+    await click(modelForm(container), "浏览");
+    await click(modelForm(container), "浏览");
     await act(async () => second.resolve({ grantId: "second", path: "C:/second", relativePath: "Second.model3.json" }));
     await act(async () => first.resolve({ grantId: "first", path: "C:/first", relativePath: "First.model3.json" }));
-    expect(field(container, NEW_URL_FIELD).value).toBe("C:/second");
-    expect(field(container, RELATIVE_PATH_FIELD).value).toBe("Second.model3.json");
-    await click(container, "添加");
+    expect(modelPath(modelForm(container))).toBe("C:/second/Second.model3.json");
+    await click(modelForm(container), "保存");
     expect(savedModels()[0]).toMatchObject({ modelUrl: "C:/second", directoryGrantId: "second", directoryPath: "Second.model3.json" });
   });
 
@@ -493,12 +422,12 @@ describe("pet settings model sources", () => {
     const pending = deferred<AssetFileGrant>();
     grantFile.mockReturnValueOnce(pending.promise);
     await click(customRows(container), "修改", 0);
-    await click(container, "重新选择模型文件");
-    await click(container, "取消");
+    await click(customRows(container), "浏览");
+    await cancelModelEdit(container);
     await click(customRows(container), "修改", 1);
     await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" }));
-    expect(field(container, EDIT_URL_FIELD).value).toBe(REMOTE_URL);
-    await click(container, "保存");
+    expect(modelPath(modelForm(container, "edit"))).toBe(REMOTE_URL);
+    await click(customRows(container), "保存");
     expect(savedModels()).toEqual([LOCAL_MODEL, REMOTE_MODEL]);
   });
 
@@ -507,12 +436,12 @@ describe("pet settings model sources", () => {
     const pending = deferred<AssetFileGrant>();
     grantFile.mockReturnValueOnce(pending.promise);
     await click(customRows(container), "修改", 0);
-    await click(container, "重新选择模型文件");
-    await click(container, "取消");
+    await click(customRows(container), "浏览");
+    await cancelModelEdit(container);
     await click(customRows(container), "修改", 1);
     await act(async () => pending.reject(new Error("stale-picker-error")));
     expect(container.textContent).not.toContain("stale-picker-error");
-    expect(field(container, EDIT_URL_FIELD).value).toBe(REMOTE_URL);
+    expect(modelPath(modelForm(container, "edit"))).toBe(REMOTE_URL);
   });
 
   it("ignores a picker result when switching directly to another model editor", async () => {
@@ -520,31 +449,31 @@ describe("pet settings model sources", () => {
     const pending = deferred<AssetFileGrant>();
     grantFile.mockReturnValueOnce(pending.promise);
     await click(customRows(container), "修改", 0);
-    await click(container, "重新选择模型文件");
-    // The first model is already being edited, so the remaining button opens
-    // the second model without going through the Cancel handler.
+    await click(customRows(container), "浏览");
+    // Opening the remaining row replaces the active editor directly.
     await click(customRows(container), "修改");
     await act(async () => pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" }));
-    expect(field(container, EDIT_URL_FIELD).value).toBe(REMOTE_URL);
+    expect(modelPath(modelForm(container, "edit"))).toBe(REMOTE_URL);
     expect(field(customRows(container), "名称").value).toBe(REMOTE_MODEL.name);
   });
 
-  it.each(["resolve", "reject"] as const)("ignores a picker %s after the new model has been added", async (outcome) => {
+  it.each(["resolve", "reject"] as const)("ignores a picker %s after the new model has been saved", async (outcome) => {
     const { container, grantFile, savedModels } = await mountSettings();
     const pending = deferred<AssetFileGrant>();
+    await fillLocalDraft(container);
     grantFile.mockReturnValueOnce(pending.promise);
-    await type(container, "名称", "New pet");
-    await type(container, NEW_URL_FIELD, REMOTE_URL);
-    await click(container, "选择本地模型文件");
-    await click(container, "添加");
+    await click(modelForm(container), "浏览");
+    await click(modelForm(container), "保存");
     await act(async () => {
       if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" });
       else pending.reject(new Error("saved-picker-error"));
     });
-    expect(field(container, NEW_URL_FIELD).value).toBe("");
-    expect(container.textContent).not.toContain("模型文件已选择");
+    expect(modelPath(modelForm(container))).toBe("未选择模型");
     expect(container.textContent).not.toContain("saved-picker-error");
-    expect(savedModels()).toEqual([{ id: expect.any(String), name: "New pet", modelUrl: REMOTE_URL }]);
+    expect(savedModels()).toEqual([{
+      id: expect.any(String), name: "New pet", modelUrl: "C:/models",
+      directoryGrantId: "grant", directoryPath: "Pet.model3.json",
+    }]);
   });
 
   it.each(["resolve", "reject"] as const)("ignores a picker %s after the edited model has been saved", async (outcome) => {
@@ -552,14 +481,13 @@ describe("pet settings model sources", () => {
     const pending = deferred<AssetFileGrant>();
     grantFile.mockReturnValueOnce(pending.promise);
     await click(customRows(container), "修改");
-    await click(container, "重新选择模型文件");
-    await click(container, "保存");
+    await click(customRows(container), "浏览");
+    await click(customRows(container), "保存");
     await act(async () => {
       if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" });
       else pending.reject(new Error("saved-picker-error"));
     });
-    expect(customRows(container).querySelector(`input[placeholder="${EDIT_URL_FIELD}"]`)).toBeNull();
-    expect(container.textContent).not.toContain("模型文件已选择");
+    expect(modelForm(container, "edit")).toBeNull();
     expect(container.textContent).not.toContain("saved-picker-error");
     expect(savedModels()).toEqual([REMOTE_MODEL]);
   });
@@ -568,7 +496,7 @@ describe("pet settings model sources", () => {
     const { container, grantFile, savedModels, unmount } = await mountSettings();
     const pending = deferred<AssetFileGrant>();
     grantFile.mockReturnValueOnce(pending.promise);
-    await click(container, "选择本地模型文件");
+    await click(modelForm(container), "浏览");
     await act(async () => unmount());
     await act(async () => {
       if (outcome === "resolve") pending.resolve({ grantId: "late", path: "C:/late-models", relativePath: "Late.model3.json" });

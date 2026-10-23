@@ -13,7 +13,6 @@ import { parsePersonas, PERSONAS_TEMPLATE, type PersonasFileView } from "./perso
 import { DEFAULT_PERSONA_ID, type CustomPersonaDef } from "./persona-shared";
 import { type CustomModelEntry, type MotionMap, type SpatialTapConfig } from "./models";
 import { listBuiltinPresets, resolveModelLocation, resolveMotionMap, resolveSpatialTap } from "./models-host";
-import { modelMotionDefinitions } from "./model-motions";
 
 
 export type PetState = "idle" | "thinking" | "error" | "done" | "waiting";
@@ -565,11 +564,6 @@ export class PetRuntime {
     const location = typeof entry === "string" ? entry : entry.modelUrl;
     if (!/^https?:\/\//i.test(location.trim())) throw new Error("本地模型请先选择并授权模型文件");
     return this.ctx.assets.remoteUrl(location.trim());
-  }
-  async fetchMotionGroups(entry: CustomModelEntry | string): Promise<string[]> {
-    const response = await fetch(this.modelAssetUrl(entry));
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return Object.keys(modelMotionDefinitions(await response.json()));
   }
   async revealPath(path: string): Promise<boolean> {
     try {

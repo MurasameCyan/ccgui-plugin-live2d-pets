@@ -17,7 +17,8 @@
 
 ### Changed
 
-- Select a local model file instead of a directory plus a manually entered path. Fill its granted parent and relative filename automatically, derive an empty name from the filename, retain editable names and explicit Add/Save confirmation, and leave drafts unchanged on cancellation. Requires Plugin SDK 0.3.21; old saved directory grants and remote-model behavior remain compatible.
+- Select a local model file instead of a directory plus a manually entered path. Fill its granted parent and relative filename automatically, derive an empty name from the filename, retain editable names and explicit Save confirmation, and leave drafts unchanged on cancellation. Requires Plugin SDK 0.3.21; old saved directory grants and configured remote models remain compatible.
+- Use a single model form row: Name, complete read-only path, Browse, and Save. Hide directory/relative-path inputs and spatial/motion editors; keep existing overrides intact on rename or file replacement, with advanced settings available through the configuration file. Long paths remain selectable and show their full value on hover; Escape exits an existing model's editor.
 
 - Refresh the plugin description and both READMEs with the CC GUI / ds-h-v3 animated showcase and a full-resolution MP4 link.
 - Document prebuilt Release/CI installation, model-specific work and jump mappings, spatial calibration, and configuration reload behavior. Keep unreleased sequential playback distinct from current-main behavior.
