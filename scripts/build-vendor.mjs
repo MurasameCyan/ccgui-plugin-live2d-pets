@@ -21,7 +21,7 @@ await build({
     },
   ],
   build: {
-    outDir: resolve(root, "dist/vendor"),
+    outDir: resolve(root, "dist"),
     emptyOutDir: false,
     target: "es2022",
     minify: "esbuild",
@@ -29,7 +29,7 @@ await build({
       entry: resolve(root, "vendor/live2d-runtime.ts"),
       name: "CCGUILive2DRuntime",
       formats: ["iife"],
-      fileName: () => "live2d-runtime.js",
+      fileName: () => "vendor-live2d-runtime.js",
     },
     rollupOptions: {
       output: { inlineDynamicImports: true },

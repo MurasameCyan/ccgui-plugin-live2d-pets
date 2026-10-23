@@ -30,6 +30,7 @@
   tokens. The three developer options are switches too, no longer checkboxes.
 
 ### Fixed
+- Publish every vendor runtime and third-party notice as a flat Release asset, matching the local installation ZIP. Marketplace entries can now pin the complete runtime rather than installing only `main.js` and `manifest.json`; no host archive support or CDN script loading is needed.
 - Preserve the exact selected local filename through Add, Save, document reload and asset URL construction; leading spaces must not redirect to a different sibling file.
 - Publish the delivery correction as plugin 1.0.11 so the updated file picker is distinguishable from older installed 1.0.10 code. Document that updating the host alone does not update installed plugins.
 

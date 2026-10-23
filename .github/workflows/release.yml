@@ -1,7 +1,6 @@
 # 发版流水线（市场规范 §9.2：tag = manifest version，无 v 前缀）。
 # 推送 tag 触发：validate → 校验 tag 与 manifest version 一致 → 构建 →
-# 发 Release，附带市场三件套（manifest.json / main.js）、vendor 运行时与
-# 可本地安装的 zip。
+# 发 Release，附带扁平运行文件及许可，市场安装和本地 zip 使用同一布局。
 name: release
 
 on:
@@ -43,10 +42,10 @@ jobs:
           version="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json','utf8')).version")"
           mkdir -p release package/ccgui-plugin-live2d-pets
           # 市场索引只固定扁平附件名（host plugins/market.rs::is_valid_asset_name）。
-          cp dist/manifest.json dist/main.js release/
-          # 本地安装包：完整目录树（vendor/ 运行时由插件自身资源桥加载）。
+          cp dist/manifest.json dist/main.js dist/vendor-* LICENSE release/
+          # 本地安装包与市场安装使用相同的扁平运行文件。
           cp dist/main.js dist/manifest.json README.md README.en.md LICENSE package/ccgui-plugin-live2d-pets/
-          cp -R dist/vendor package/ccgui-plugin-live2d-pets/vendor
+          cp dist/vendor-* package/ccgui-plugin-live2d-pets/
           mkdir -p package/ccgui-plugin-live2d-pets/docs/media
           cp docs/media/hero.jpg package/ccgui-plugin-live2d-pets/docs/media/
           # icon 是仓库相对路径，本地安装没有市场那步「索引图落盘」，
@@ -54,14 +53,18 @@ jobs:
           mkdir -p package/ccgui-plugin-live2d-pets/assets
           cp -R dist/icons package/ccgui-plugin-live2d-pets/assets/icons
           (cd package && zip -qr "../release/ccgui-plugin-live2d-pets-${version}.zip" ccgui-plugin-live2d-pets)
-          (cd release && sha256sum manifest.json main.js "ccgui-plugin-live2d-pets-${version}.zip" > checksums.txt)
+          (cd release && sha256sum manifest.json main.js vendor-* LICENSE "ccgui-plugin-live2d-pets-${version}.zip" > checksums.txt)
           cat release/checksums.txt
 
       - uses: softprops/action-gh-release@v2
         with:
+          # Promote manually after release-asset and marketplace smoke checks.
+          make_latest: false
           files: |
             release/manifest.json
             release/main.js
+            release/vendor-*
+            release/LICENSE
             release/checksums.txt
             release/ccgui-plugin-live2d-pets-*.zip
           fail_on_unmatched_files: true

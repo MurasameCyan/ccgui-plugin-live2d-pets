@@ -105,15 +105,15 @@ type TapPart = "head" | "leg" | "arm" | "body"
 
 /** Vendor paths resolved through the host asset bridge. */
 const VENDOR_SCRIPTS = [
-  "vendor/pixi.min.js",
+  "vendor-pixi.min.js",
   // Replaces PIXI's generated uniform sync functions without weakening CSP.
-  "vendor/pixi-unsafe-eval.min.js",
+  "vendor-pixi-unsafe-eval.min.js",
   // The two Core globals are independent.
-  "vendor/live2d.min.js",
-  "vendor/live2dcubismcore.min.js",
-  "vendor/live2d-display.cubism2.min.js",
+  "vendor-live2d.min.js",
+  "vendor-live2dcubismcore.min.js",
+  "vendor-live2d-display.cubism2.min.js",
   // Registers the official Cubism 5.3 SDK for Web (R5) runtime in the shared factory.
-  "vendor/live2d-runtime.js",
+  "vendor-live2d-runtime.js",
 ];
 
 

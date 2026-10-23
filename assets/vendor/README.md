@@ -2,9 +2,9 @@
 
 ## Loading and build contract
 
-Classic-script load order: `pixi.min.js`, `pixi-unsafe-eval.min.js`,
-`live2d.min.js`, `live2dcubismcore.min.js`,
-`live2d-display.cubism2.min.js`, then `live2d-runtime.js`.
+Classic-script load order: `vendor-pixi.min.js`, `vendor-pixi-unsafe-eval.min.js`,
+`vendor-live2d.min.js`, `vendor-live2dcubismcore.min.js`,
+`vendor-live2d-display.cubism2.min.js`, then `vendor-live2d-runtime.js`.
 The two Core globals are independent. The bundled display provides the
 single shared Pixi Live2D model/factory for `.model.json` models; the
 generated adapter registers the official Cubism 5.3 SDK for Web (R5) runtime
@@ -13,7 +13,11 @@ display is not shipped.
 
 `vendor/live2d-runtime.ts` is the source entry, built by
 `scripts/build-vendor.mjs` as a minified ES2022 IIFE at
-`dist/vendor/live2d-runtime.js`. `bun run typecheck:vendor` checks the adapter,
+`dist/vendor-live2d-runtime.js`. Static source assets retain their upstream
+filenames; the main build emits them flat as `dist/vendor-<name>`. Both the
+market release assets and local ZIP use that same layout. The market entry
+must pin all runtime files and notices, not just the plugin entry.
+`bun run typecheck:vendor` checks the adapter,
 vendored Framework and Core declarations independently from the plugin. The
 vendor-only `vendor/tsconfig.json` disables `strictFunctionTypes` and
 `useDefineForClassFields` for TypeScript compatibility with those upstream

@@ -15,12 +15,14 @@
 ## 安装
 
 1. 在 [Releases](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/releases/latest) 下载 `ccgui-plugin-live2d-pets-<版本>.zip` 并解压。
-2. 在 CC GUI 中打开「设置 → 插件 → 从本地目录安装」，选择解压后**包含 `manifest.json`、`main.js` 与 `vendor/` 的目录**。
+2. 在 CC GUI 中打开「设置 → 插件 → 从本地目录安装」，选择解压后**包含 `manifest.json`、`main.js` 与 `vendor-*.js` 的目录**。
 3. 启用插件，在「Live2D 桌宠」设置页选择模型、尺寸和人设。
 
 不需要本地编译；源码仓库根目录不是安装目录。需要主分支开发版本时，使用 [GitHub Actions](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/actions/workflows/package.yml) 的安装包。更新时安装同一插件 ID 的新目录即可；当前发行版本以 Releases 为准，主分支可能包含尚未发版的改动。
 
 宿主与插件分别更新：安装新的 `self-build` 应用不会替换已安装的插件。出现旧的目录选择或多行模型表单时，从上述 Actions 下载新插件包并重新安装；更新后的表单为「名称｜模型路径（只读文本）｜浏览｜保存」。插件包只含运行代码、vendor 运行时与许可、README、图标和静态截图，宣传 GIF／MP4 与开发文档留在仓库，不随包安装。
+
+市场安装与 ZIP 安装使用同一套扁平运行文件。Release 的 `vendor-*` 附件及第三方许可必须逐项登记在市场索引的 `sha256` 中；仅下载 `main.js` 与 `manifest.json` 不足以加载模型。旧版本索引未登记 vendor，需要安装完整 ZIP；新版本登记合并后才可从市场完整安装和升级。
 
 需要宿主 **Plugin SDK ≥ 0.3.21**，提供 `ui:overlay`、资源桥、回合开始 hook、
 `session://activated` 与文件选择并授权父目录的 `assets.grantFile`。

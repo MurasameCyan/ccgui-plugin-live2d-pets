@@ -32,12 +32,14 @@ A Live2D pet inside the CC GUI viewport. It follows the active AI session and su
 ## Install in CC GUI
 
 1. Download `ccgui-plugin-live2d-pets-<version>.zip` from [Releases](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/releases/latest) and extract it.
-2. In CC GUI, open **Settings → Plugins → Install from local directory** and select the extracted directory containing **`manifest.json`, `main.js`, and `vendor/`**.
+2. In CC GUI, open **Settings → Plugins → Install from local directory** and select the extracted directory containing **`manifest.json`, `main.js`, and `vendor-*.js`**.
 3. Enable the plugin and open its **Live2D Pets** settings to choose a model, size, and persona.
 
 No local build is required. The source repository root is not an installable plugin directory. For the current development version, use the package from [GitHub Actions](https://github.com/MurasameCyan/ccgui-plugin-live2d-pets/actions/workflows/package.yml). Install an updated directory with the same plugin ID to update the plugin. Releases are the published versions; `main` may contain unreleased changes.
 
 The host and plugin update separately: installing a new `self-build` application does not replace an installed plugin. Install the updated Actions plugin package if the old directory picker or multi-line form remains. The new form contains only **Name | Model path (read-only text) | Browse | Save**. Installation packages include code, vendor runtimes and notices, READMEs, the icon, and static artwork only. Promotional GIF/MP4 files and development documentation remain online, outside the installation package.
+
+Marketplace and ZIP installs use the same flat runtime files. Every `vendor-*` release asset and third-party notice must be pinned in the market entry's `sha256`; `main.js` and `manifest.json` alone cannot load models. Older entries omit those assets and require a complete ZIP installation. Complete marketplace installs and upgrades become available after the updated registration is merged.
 
 The host must provide **Plugin SDK ≥ 0.3.21**, including `assets.grantFile`, in addition to satisfying the manifest's minimum application version.
 
