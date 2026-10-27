@@ -581,14 +581,14 @@ describe("pet overlay display lifecycle", () => {
     expect(h.value("当前动作")).toBe("Thinking[0]");
   });
 
-  it("advances a looping Thinking into a persistent Working variant after fifteen seconds", async () => {
+  it("advances a looping Thinking into a persistent Working variant after thirty seconds", async () => {
     vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
     const h = await mountMotionPet(["Idle", "Thinking", "Working", "TapHead"]);
     h.manager.definitions.Thinking![0]!.CCGUI = { Loop: true };
     h.manager.definitions.Working = [0, 1].map((index) => ({ file: `work-${index}.mtn` }));
     const random = vi.spyOn(Math, "random").mockReturnValue(0.99);
     await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
-    await act(async () => { vi.advanceTimersByTime(14_999); });
+    await act(async () => { vi.advanceTimersByTime(29_999); });
     expect(h.manager.state.currentGroup).toBe("Thinking");
     await act(async () => { vi.advanceTimersByTime(1); });
     expect(h.value("真实状态")).toBe("thinking");
@@ -614,7 +614,7 @@ describe("pet overlay display lifecycle", () => {
     const h = await mountMotionPet(["Idle", "Thinking", "Working", "TapHead"]);
     h.manager.definitions.Thinking![0]!.CCGUI = { Loop: true };
     await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
-    await act(async () => { vi.advanceTimersByTime(14_000); });
+    await act(async () => { vi.advanceTimersByTime(29_000); });
     const cold = h.manager.hold("TapHead");
     await h.tap();
     await act(async () => { h.manager.frame(); vi.advanceTimersByTime(2_000); });
@@ -635,7 +635,7 @@ describe("pet overlay display lifecycle", () => {
     h.manager.definitions.Thinking![0]!.CCGUI = { Loop: true };
     await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
     await act(async () => {
-      vi.advanceTimersByTime(14_000);
+      vi.advanceTimersByTime(29_000);
       pointer(h.modelCanvas()!, "pointerdown", 100, 100);
       pointer(h.modelCanvas()!, "pointermove", 80, 80);
       vi.advanceTimersByTime(2_000);
@@ -651,7 +651,7 @@ describe("pet overlay display lifecycle", () => {
     const event = turnEvent();
     await act(async () => { h.getTurnHooks()?.onTurnStarted?.(event); });
     const cold = h.manager.hold("Working");
-    await act(async () => { vi.advanceTimersByTime(15_000); });
+    await act(async () => { vi.advanceTimersByTime(30_000); });
     expect(h.manager.state.reservedGroup).toBe("Working");
     await act(async () => {
       if (state === "waiting") h.getTurnHooks()?.onRuntimeEvent?.({
@@ -692,11 +692,11 @@ describe("pet overlay display lifecycle", () => {
     const h = await mountMotionPet(["Idle", "Thinking", "Working", "Done"]);
     const event = turnEvent();
     await act(async () => { h.getTurnHooks()?.onTurnStarted?.(event); });
-    await act(async () => { vi.advanceTimersByTime(15_000); });
+    await act(async () => { vi.advanceTimersByTime(30_000); });
     expect(h.manager.state.currentGroup).toBe("Working");
     await act(async () => { h.getTurnHooks()?.afterTurn?.({ ...event, status: "completed" }); });
     await act(async () => { h.getTurnHooks()?.onTurnStarted?.({ ...event, turnId: "turn-2" }); });
-    await act(async () => { vi.advanceTimersByTime(14_999); });
+    await act(async () => { vi.advanceTimersByTime(29_999); });
     expect(h.manager.state.currentGroup).toBe("Thinking");
     await act(async () => { vi.advanceTimersByTime(1); });
     expect(h.manager.state.currentGroup).toBe("Working");

@@ -169,12 +169,12 @@ function normalizeMaxFps(raw: unknown): number {
 }
 /**
  * 阶段演进气泡（spec §3）：思考/等审批为长状态（可达数十秒以上），气泡与
- * 状态同生命周期**常驻**，文案按入态后耗时推进（afterMs 为距入态偏移），
- * 默认思考在 15 秒后转 Working 循环；状态一变即被新状态表现取代。
+ * 状态同生命周期**常驻**，文案按入态后耗时推进（afterMs 为距入态偏移）。
+ * 默认思考最多 30 秒后转 Working 循环；状态一变即被新状态表现取代。
  * 文案取自当前人设台词表（thinking1..3 / waiting1..3，spec §3 人设化台词）。
  */
 const STAGED_DELAYS: Partial<Record<PetState, number[]>> = {
-  thinking: [0, 15_000, 40_000],
+  thinking: [0, 30_000, 40_000],
   waiting: [0, 30_000, 90_000],
 }
 /** 长状态阶段文案池键。 */
