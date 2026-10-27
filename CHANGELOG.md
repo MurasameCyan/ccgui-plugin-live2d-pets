@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.14 — 2026-10-27
+
+### Fixed
+
+- Restore the default Thinking → Working transition after 15 seconds even when Thinking loops. Keep the selected Working variant looping through later dialogue stages and touch recovery, defer deadline-crossing interactions or drags without losing the transition, and cancel stale transitions on state changes.
+
 ## Unreleased
 
 ### Added
