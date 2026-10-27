@@ -170,7 +170,7 @@ function normalizeMaxFps(raw: unknown): number {
 /**
  * 阶段演进气泡（spec §3）：思考/等审批为长状态（可达数十秒以上），气泡与
  * 状态同生命周期**常驻**，文案按入态后耗时推进（afterMs 为距入态偏移），
- * 阶段切换时重播一次状态动作；状态一变即被新状态表现取代。
+ * 默认思考在 15 秒后转 Working 循环；状态一变即被新状态表现取代。
  * 文案取自当前人设台词表（thinking1..3 / waiting1..3，spec §3 人设化台词）。
  */
 const STAGED_DELAYS: Partial<Record<PetState, number[]>> = {
@@ -437,6 +437,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
   let stageTimers: number[] = []
   let stagedState: PetState | null = null
   let stageIndex = 0
+  let stagePlaybackPending = false
   let lastState: PetState | null = null
   let scriptedMotion: ScriptedMotion | null = null
   let demoState: PetState | null = null
@@ -580,6 +581,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     stageTimers = []
     stagedState = null
     stageIndex = 0
+    stagePlaybackPending = false
   }
 
   /** 进入阶段演进状态：立即显示阶段 0 并按偏移调度后续阶段（spec §3）。 */
@@ -594,14 +596,32 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     for (let i = 1; i < delays.length; i++) {
       stageTimers.push(window.setTimeout(() => {
         stageIndex = i
-        // 拖拽中暂停气泡与动作（spec §4），阶段静默推进、松手后恢复新阶段
-        if (!dragging && !scriptedMotion && !(lastMotionRequest?.kind === 'interaction'
-          && (lastMotionRequest.phase === 'pending' || lastMotionRequest.phase === 'playing'))) {
-          showStageText()
-          playState(state)
-        }
+        stagePlaybackPending = true
+        flushStagePlayback()
       }, delays[i]))
     }
+  }
+
+  /** A loop is not a phase lock. Touch/drag defer the deadline, not cancel it. */
+  function flushStagePlayback(): void {
+    const request = lastMotionRequest
+    if (!stagePlaybackPending || !stagedState || !model || dragging
+      || (request && request.kind !== 'state' && (request.phase === 'pending' || request.phase === 'playing'))) return
+    stagePlaybackPending = false
+    const working = stagedWorkingGroup()
+    const workPending = working && request?.kind === 'state' && request.slot === 'thinking'
+      && request.candidate === working && request.phase === 'pending'
+    showStageText()
+    if (!workPending && (!scriptedMotion || (working && scriptedMotion.group !== working))) playState(stagedState)
+  }
+
+  /** Explicit mappings keep their chosen motions; only the default thinking chain advances. */
+  function stagedWorkingGroup(): string | null {
+    if (stagedState !== 'thinking' || stageIndex === 0 || motionMap.thinking?.length) return null
+    const definitions = model?.internalModel?.motionManager?.definitions ?? {}
+    const group = resolveMotionNames(['Working'], Object.keys(definitions))[0]
+    const motions = group ? definitions[group] : null
+    return group && Array.isArray(motions) && motions.length > 0 ? group : null
   }
 
   /** 按 client 坐标应用鼠标跟随（model.focus 吃 canvas 本地坐标）。 */
@@ -643,7 +663,9 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       names = [...(DEFAULT_MOTION_MAP[slot] ?? [])]
     }
     const nativeGroups = Object.keys(model?.internalModel?.motionManager?.definitions ?? {})
-    return resolveMotionNames(names, nativeGroups)
+    const resolved = resolveMotionNames(names, nativeGroups)
+    const working = slot === 'thinking' ? stagedWorkingGroup() : null
+    return working ? [working, ...resolved.filter(name => name !== working)] : resolved
   }
 
   function pauseScriptedMotion(): void {
@@ -729,6 +751,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     request.phase = 'failed'
     releaseFocusSuppression()
     renderDebugText()
+    if (options.kind === 'interaction') {
+      flushStagePlayback()
+      if (request.seq !== motionSeq) return false
+    }
     if (options.kind === 'interaction' && scriptedMotion) resumeScriptedMotion()
     else if (options.resume) { scriptedMotion = null; showStageText() }
     return false
@@ -751,7 +777,10 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
     if (request && request.kind !== 'interaction') {
       if (!request.resume) {
         const definitions = model?.internalModel?.motionManager?.definitions?.[group]
-        const script = motionPlaybackScript(Array.isArray(definitions) ? definitions[index] : null)
+        let script = motionPlaybackScript(Array.isArray(definitions) ? definitions[index] : null)
+        if (request.kind === 'state' && request.slot === 'thinking' && group === stagedWorkingGroup()) {
+          script = { ...script, loop: true }
+        }
         scriptedMotion = script ? {
           group, index, kind: request.kind, slot: request.slot, script, elapsedMs: 0, tickAt: null, cueIndex: -1,
         } : null
@@ -776,6 +805,8 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       queueMicrotask(() => {
         if (disposed || request.seq !== motionSeq || request !== lastMotionRequest) return
         releaseFocusSuppression()
+        if (request.kind !== 'preview') flushStagePlayback()
+        if (request.seq !== motionSeq) return
         if (scriptedMotion && (request.kind === 'interaction' || scriptedMotion.script.loop)) {
           resumeScriptedMotion()
           return
@@ -1938,6 +1969,7 @@ function boot(anchor: HTMLDivElement | null, runtime: PetRuntime): (() => void) 
       dragging = false
       void runtime.setDisplay({ right: Math.round(pos.right), bottom: Math.round(pos.bottom) }).catch(() => {});
       // 拖拽中隐藏的常驻气泡恢复当前阶段文案（spec §4：拖拽中暂停、结束恢复）
+      flushStagePlayback()
       showStageText()
     } else {
       handleTap(e)

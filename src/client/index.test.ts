@@ -581,6 +581,127 @@ describe("pet overlay display lifecycle", () => {
     expect(h.value("当前动作")).toBe("Thinking[0]");
   });
 
+  it("advances a looping Thinking into a persistent Working variant after fifteen seconds", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const h = await mountMotionPet(["Idle", "Thinking", "Working", "TapHead"]);
+    h.manager.definitions.Thinking![0]!.CCGUI = { Loop: true };
+    h.manager.definitions.Working = [0, 1].map((index) => ({ file: `work-${index}.mtn` }));
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.99);
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await act(async () => { vi.advanceTimersByTime(14_999); });
+    expect(h.manager.state.currentGroup).toBe("Thinking");
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(h.value("真实状态")).toBe("thinking");
+    expect(h.value("演示状态")).toBe("未启用");
+    expect(h.manager.state.currentGroup).toBe("Working");
+    expect(h.manager.state.currentIndex).toBe(1);
+
+    random.mockReturnValue(0);
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Working");
+    expect(h.manager.state.currentIndex).toBe(1);
+    await act(async () => { vi.advanceTimersByTime(25_000); });
+    expect(h.manager.state.currentIndex).toBe(1);
+    await h.tap();
+    expect(h.manager.state.currentGroup).toBe("TapHead");
+    await act(async () => { h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Working");
+    expect(h.manager.state.currentIndex).toBe(1);
+  });
+
+  it.each(["finished", "failed"] as const)("defers the work transition until a cold interaction has %s", async (outcome) => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const h = await mountMotionPet(["Idle", "Thinking", "Working", "TapHead"]);
+    h.manager.definitions.Thinking![0]!.CCGUI = { Loop: true };
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await act(async () => { vi.advanceTimersByTime(14_000); });
+    const cold = h.manager.hold("TapHead");
+    await h.tap();
+    await act(async () => { h.manager.frame(); vi.advanceTimersByTime(2_000); });
+    expect(h.manager.state.reservedGroup).toBe("TapHead");
+    if (outcome === "finished") {
+      await act(async () => { cold.resolve(); });
+      expect(h.manager.state.currentGroup).toBe("TapHead");
+      await act(async () => { h.manager.finish(); });
+    } else {
+      await act(async () => { cold.reject(new Error("interaction unavailable")); });
+    }
+    expect(h.manager.state.currentGroup).toBe("Working");
+  });
+
+  it("applies a work deadline crossed during dragging when the pet is dropped", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const h = await mountMotionPet(["Idle", "Thinking", "Working"]);
+    h.manager.definitions.Thinking![0]!.CCGUI = { Loop: true };
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await act(async () => {
+      vi.advanceTimersByTime(14_000);
+      pointer(h.modelCanvas()!, "pointerdown", 100, 100);
+      pointer(h.modelCanvas()!, "pointermove", 80, 80);
+      vi.advanceTimersByTime(2_000);
+    });
+    expect(h.manager.state.currentGroup).toBe("Thinking");
+    await act(async () => { pointer(h.modelCanvas()!, "pointerup", 80, 80); });
+    expect(h.manager.state.currentGroup).toBe("Working");
+  });
+
+  it.each(["waiting", "done", "error", "idle"] as const)("does not let a late Working load overwrite %s", async (state) => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const h = await mountMotionPet(["Idle", "Thinking", "Working", "Waiting", "Done", "Failed"]);
+    const event = turnEvent();
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(event); });
+    const cold = h.manager.hold("Working");
+    await act(async () => { vi.advanceTimersByTime(15_000); });
+    expect(h.manager.state.reservedGroup).toBe("Working");
+    await act(async () => {
+      if (state === "waiting") h.getTurnHooks()?.onRuntimeEvent?.({
+        ...event, kind: "permission-requested", eventId: "permission-work", workspaceId: "workspace-1",
+        workspacePath: event.workspace.path, tool: "shell", path: null,
+      });
+      else h.getTurnHooks()?.afterTurn?.({ ...event, status: state === "done" ? "completed" : state === "error" ? "failed" : "cancelled" });
+      cold.resolve();
+    });
+    expect(h.runtime.snapshot().state).toBe(state);
+    expect(h.manager.state.currentGroup).toBe({ waiting: "Waiting", done: "Done", error: "Failed", idle: "Idle" }[state]);
+    await act(async () => { vi.advanceTimersByTime(60_000); });
+    expect(h.manager.state.currentGroup).not.toBe("Working");
+  });
+
+  it.each(["Thinking", "Working"])("preserves an explicit %s mapping instead of applying the default phase transition", async (group) => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const h = await mountMotionPet(["Idle", "Thinking", "Working"], { thinking: [group] });
+    h.manager.definitions[group]![0]!.CCGUI = { Loop: true };
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    expect(h.manager.state.currentGroup).toBe(group);
+    await act(async () => { vi.advanceTimersByTime(40_000); h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe(group);
+  });
+
+  it("retains Thinking when the model has no Working motion", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const h = await mountMotionPet(["Idle", "Thinking"]);
+    h.manager.definitions.Thinking![0]!.CCGUI = { Loop: true };
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(turnEvent()); });
+    await act(async () => { vi.advanceTimersByTime(40_000); h.manager.finish(); });
+    expect(h.manager.state.currentGroup).toBe("Thinking");
+    expect(h.value("请求阶段")).toBe("playing");
+  });
+
+  it("starts a new Thinking interval after a working turn completes", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+    const h = await mountMotionPet(["Idle", "Thinking", "Working", "Done"]);
+    const event = turnEvent();
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.(event); });
+    await act(async () => { vi.advanceTimersByTime(15_000); });
+    expect(h.manager.state.currentGroup).toBe("Working");
+    await act(async () => { h.getTurnHooks()?.afterTurn?.({ ...event, status: "completed" }); });
+    await act(async () => { h.getTurnHooks()?.onTurnStarted?.({ ...event, turnId: "turn-2" }); });
+    await act(async () => { vi.advanceTimersByTime(14_999); });
+    expect(h.manager.state.currentGroup).toBe("Thinking");
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(h.manager.state.currentGroup).toBe("Working");
+  });
+
   it("keeps the selected scripted work variant through loops and a cold tap", async () => {
     const h = await mountMotionPet(["Idle", "Working", "TapHead"], { thinking: ["Working"] });
     h.manager.definitions.Working = [0, 1].map((index) => ({ file: `work-${index}.mtn`, CCGUI: { Loop: true } }));

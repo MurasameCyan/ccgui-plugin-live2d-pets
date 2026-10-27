@@ -74,7 +74,9 @@ Build and packaging run in GitHub Actions. CI invokes `bun run validate` for typ
 
 ### Mapping the showcase model
 
-For ds-h-v3, configure **Thinking → `Working`** to use its work/singing poses during a task, **Body → `TapJump`** for jumping, and **Done → `Done`** for completion in `custom-models.jsonc`. Multiple groups in one `animationMap` slot specify candidates, not a sequential playlist; configuring both `Thinking` and `Working` does not mean “play Thinking once, then Working.”
+For ds-h-v3, the default, unoverridden thinking behavior starts with `Thinking`, enters `Working` after 15 seconds, and keeps the selected variant looping. An interaction or drag that crosses the deadline defers the transition until it ends. If no `Working` candidate can play, the default falls back to `Thinking`; approval, completion, and error states cancel the old work loop.
+
+Configure **Thinking → `Working`** in `custom-models.jsonc` to start working immediately, **Body → `TapJump`** for jumping, and **Done → `Done`** for completion. Explicit thinking mappings take precedence over the default staged candidates. Multiple groups in one `animationMap` slot specify candidates, not a sequential playlist; configuring both `Thinking` and `Working` does not mean “play Thinking once, then Working.”
 
 If the apron is classified as legs, set the spatial zone's leg boundary (`legMinNy`) to `0.82`. This calibration is specific to ds-h-v3. Merge the following fields into its existing custom-model entry without replacing its ID, directory grant, or unrelated settings:
 
