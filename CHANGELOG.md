@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.15 — 2026-10-28
+
+### Fixed
+
+- Cap the default Thinking phase at 30 seconds before entering the persistent Working loop, while preserving the selected variant, interaction recovery, explicit mappings, and fallback behavior.
+
 ## 1.0.14 — 2026-10-27
 
 ### Fixed
