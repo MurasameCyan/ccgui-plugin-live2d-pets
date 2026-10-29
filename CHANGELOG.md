@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.16 — 2026-10-29
+
+### Fixed
+
+- Republish the 1.0.15 runtime unchanged so the marketplace can register every runtime file. The 1.0.13 and 1.0.15 index entries pinned only `manifest.json` and `main.js`, so marketplace installs had no `vendor-*` runtimes and could not load models. GitHub Release ZIP installs were unaffected.
+
+### Changed
+
+- Document that updates install over the existing plugin ID. Uninstalling first clears the host's local model folder authorizations, so every local model must be selected again with **Browse**.
+
 ## 1.0.15 — 2026-10-28
 
 ### Fixed
